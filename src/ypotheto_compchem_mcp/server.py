@@ -19,3 +19,4 @@ from ypotheto_compchem_mcp.modules import quantum_tools
 from ypotheto_compchem_mcp.modules import vibrations_tools
 from ypotheto_compchem_mcp.modules import dynamics_tools
 from ypotheto_compchem_mcp.modules import periodic_tools
+from ypotheto_compchem_mcp.modules import polymer_tools

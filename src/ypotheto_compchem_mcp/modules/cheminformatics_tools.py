@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
 from ypotheto_compchem_mcp.artifacts import register_artifact
@@ -42,4 +43,170 @@ def calculate_descriptors(molecule_id: str) -> dict:
         interpretation=interpretation,
         artifacts=[report_art],
         meta={"molecule_id": molecule_id}
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def standardize_molecule(
+    smiles_or_sdf: str,
+    strip_salts: bool = True,
+    neutralize: bool = True,
+    canonicalize_tautomer: bool = True,
+    name: Optional[str] = None
+) -> dict:
+    """
+    Standardize a molecule: parses structure, strips salts, neutralizes formal charge,
+    canonicalizes tautomers, and sanitizes/minimized the output.
+    
+    Parameters:
+    - smiles_or_sdf: SMILES string or SDF block of the molecule to standardize.
+    - strip_salts: If True, strips counter-ions and salt fragments (default True).
+    - neutralize: If True, neutralizes formal charges (default True).
+    - canonicalize_tautomer: If True, standardizes to the canonical tautomer (default True).
+    - name: Optional name for the standardized molecule.
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    from ypotheto_compchem_mcp.chemistry.standardizer import standardize_molecule_engine
+    
+    workspace_id = get_workspace_id()
+    res = standardize_molecule_engine(
+        workspace_id, smiles_or_sdf, strip_salts, neutralize, canonicalize_tautomer, name
+    )
+    
+    molecule_id = res["molecule_id"]
+    
+    # Save standard 2D layout SVG as artifact
+    svg_art = register_artifact(
+        f"{molecule_id}.svg",
+        res["svg_data"].encode("utf-8"),
+        "depiction",
+        f"2D Layout of {res['name']}"
+    )
+    
+    interpretation = (
+        f"Molecule standardized successfully: {molecule_id}. "
+        f"Formula: {res['formula']}. Standardized SMILES: {res['standardized_smiles']}. "
+        f"Steps executed: {', '.join(res['steps_taken']) if res['steps_taken'] else 'none'}."
+    )
+    
+    res_clean = {k: v for k, v in res.items() if k != "svg_data"}
+    
+    return make_success_response(
+        results=res_clean,
+        interpretation=interpretation,
+        artifacts=[svg_art],
+        meta={
+            "molecule_id": molecule_id,
+            "type": "standardized_molecule"
+        }
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def enumerate_tautomers(
+    molecule_id: str
+) -> dict:
+    """
+    Enumerate all tautomeric forms for a stored molecule.
+    
+    Parameters:
+    - molecule_id: The stored molecule handle.
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    from ypotheto_compchem_mcp.chemistry.standardizer import enumerate_tautomers_engine
+    
+    workspace_id = get_workspace_id()
+    res = enumerate_tautomers_engine(workspace_id, molecule_id)
+    
+    interpretation = (
+        f"Tautomer enumeration completed for {molecule_id}. "
+        f"Found {res['tautomers_count']} possible tautomers."
+    )
+    
+    return make_success_response(
+        results=res,
+        interpretation=interpretation,
+        meta={"molecule_id": molecule_id}
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def search_conformers(
+    molecule_id: str,
+    num_conformers: int = 50,
+    rmsd_threshold: float = 0.5
+) -> dict:
+    """
+    Generate multiple conformers for a molecule, relax them, prune duplicates,
+    and rank them by forcefield energy and Boltzmann populations.
+    
+    Parameters:
+    - molecule_id: The stored molecule handle.
+    - num_conformers: Maximum number of conformers to embed initially (default 50).
+    - rmsd_threshold: RMSD threshold in Angstroms for pruning duplicates (default 0.5 Å).
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    from ypotheto_compchem_mcp.chemistry.conformer_engine import search_conformers_engine
+    
+    workspace_id = get_workspace_id()
+    res = search_conformers_engine(workspace_id, molecule_id, num_conformers, rmsd_threshold)
+    
+    interpretation = (
+        f"Conformer ensemble search completed. "
+        f"Found {res['conformers_found']} unique conformers (RMSD threshold {rmsd_threshold} Å). "
+        f"Lowest energy conformer: {res['lowest_energy_kcal_mol']:.4f} kcal/mol."
+    )
+    
+    return make_success_response(
+        results=res,
+        interpretation=interpretation,
+        meta={"molecule_id": molecule_id}
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def save_conformer_as_molecule(
+    parent_molecule_id: str,
+    rdkit_conformer_id: int,
+    name: Optional[str] = None
+) -> dict:
+    """
+    Extract a single conformer from a search result and save it as a new molecule in the workspace.
+    
+    Parameters:
+    - parent_molecule_id: The molecule handle that underwent the conformer search.
+    - rdkit_conformer_id: The internal RDKit conformer ID to extract.
+    - name: Optional label for the resulting molecule.
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    from ypotheto_compchem_mcp.chemistry.conformer_engine import save_conformer_as_molecule_engine
+    
+    workspace_id = get_workspace_id()
+    res = save_conformer_as_molecule_engine(workspace_id, parent_molecule_id, rdkit_conformer_id, name)
+    
+    molecule_id = res["molecule_id"]
+    
+    svg_art = register_artifact(
+        f"{molecule_id}.svg",
+        res["svg_data"].encode("utf-8"),
+        "depiction",
+        f"2D Layout of conformer molecule {molecule_id}"
+    )
+    
+    interpretation = (
+        f"Extracted conformer {rdkit_conformer_id} from {parent_molecule_id} and "
+        f"saved as new molecule: {molecule_id} ({res['name']})."
+    )
+    
+    res_clean = {k: v for k, v in res.items() if k != "svg_data"}
+    
+    return make_success_response(
+        results=res_clean,
+        interpretation=interpretation,
+        artifacts=[svg_art],
+        meta={
+            "molecule_id": molecule_id,
+            "parent_id": parent_molecule_id,
+            "parent_conformer_id": rdkit_conformer_id
+        }
     )
