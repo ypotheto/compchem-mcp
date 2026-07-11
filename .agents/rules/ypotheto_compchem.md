@@ -27,3 +27,7 @@ These custom instructions must guide all development and styling decisions for t
 *   **Version Bump & Tagging**: Whenever committing changes to the codebase, we must increment the package version (major, minor, or patch according to semver) in `pyproject.toml` and `src/ypotheto_compchem_mcp/__init__.py`.
 *   **Git Tag**: Create an annotated git tag in the format `vx.x.x` matching the new version and push the tag along with the commit.
 *   **Automation Script**: Use `scripts/bump_version.py` to automate version incrementing, file updates, staging, committing, and tagging.
+*   **Implicit Execution Rule**: When the user requests to bump the version and commit, the agent must run `scripts/bump_version.py` directly. The agent must evaluate the scope of work:
+    *   Use `--major` for breaking API changes.
+    *   Use `--minor` for new features or modules (e.g. adding a new chemistry solver).
+    *   Use `--patch` (default) for bug fixes, test additions, or documentation improvements.
