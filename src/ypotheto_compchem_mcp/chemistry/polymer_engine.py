@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import numpy as np
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from rdkit import Chem
 from rdkit.Chem import AllChem
@@ -23,57 +23,74 @@ PACKMOL_AVAILABLE = bool(shutil.which("packmol"))
 LAMMPS_AVAILABLE = bool(shutil.which("lammps") or shutil.which("lmp") or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes"))
 
 
-def _parse_lammps_thermo_log(log_text: str) -> Optional[Dict[str, float]]:
+def _parse_lammps_thermo_lines(lines: Iterable[str]) -> Optional[Dict[str, float]]:
     """
-    Parse the final thermo row from LAMMPS stdout produced by
+    Parse the final thermo row from LAMMPS output lines produced by
     `thermo_style custom step temp press pe ke etotal density`, which LAMMPS
     prints with the header tokens Step/Temp/Press/PotEng/KinEng/TotEng/Density.
     Returns None if the expected header/rows cannot be found.
 
+    `lines` is consumed once, in order, so callers can stream it from a file
+    instead of holding the whole log in memory as one string - long production
+    runs with frequent thermo output can otherwise produce a Python string
+    many MB-GB in size.
+
     The generated input script issues an initial `run 0` (before the ensemble
     fix is even applied) followed by the real production `run {steps}` - and
-    LAMMPS reprints the thermo header for every `run` invocation. This uses
-    the LAST header occurrence, not the first, so it reads the production
-    run's final row instead of the pre-equilibration `run 0` row.
+    LAMMPS reprints the thermo header for every `run` invocation. Each time a
+    new header line is seen, any previously accumulated table is discarded, so
+    the result reflects the LAST `run`'s final row, not the pre-equilibration
+    `run 0` row.
     """
-    lines = log_text.splitlines()
     header_tokens = None
-    header_line_idx = None
-    for i, line in enumerate(lines):
+    last_row = None
+    in_table = False
+
+    for line in lines:
         tokens = line.split()
         if "PotEng" in tokens and "Density" in tokens:
             header_tokens = tokens
-            header_line_idx = i
+            last_row = None
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if len(tokens) != len(header_tokens):
+            in_table = False
+            continue
+        try:
+            last_row = [float(t) for t in tokens]
+        except ValueError:
+            in_table = False
 
-    if header_tokens is None:
+    if header_tokens is None or last_row is None:
         return None
 
     try:
         pe_idx = header_tokens.index("PotEng")
         density_idx = header_tokens.index("Density")
-    except ValueError:
-        return None
-
-    last_row = None
-    for line in lines[header_line_idx + 1:]:
-        tokens = line.split()
-        if len(tokens) != len(header_tokens):
-            break
-        try:
-            row = [float(t) for t in tokens]
-        except ValueError:
-            break
-        last_row = row
-
-    if last_row is None:
-        return None
-
-    try:
         return {
             "potential_energy_kcal_mol": last_row[pe_idx],
             "final_density_g_cm3": last_row[density_idx],
         }
-    except IndexError:
+    except (ValueError, IndexError):
+        return None
+
+
+def _parse_lammps_thermo_log(log_text: str) -> Optional[Dict[str, float]]:
+    """Parse the final thermo row from a LAMMPS log held in memory as a string."""
+    return _parse_lammps_thermo_lines(log_text.splitlines())
+
+
+def _parse_lammps_thermo_log_file(log_path: str) -> Optional[Dict[str, float]]:
+    """
+    Parse the final thermo row from a LAMMPS log file on disk, streaming it
+    line-by-line rather than reading it into memory as a single string.
+    """
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            return _parse_lammps_thermo_lines(f)
+    except FileNotFoundError:
         return None
 
 try:
@@ -519,17 +536,19 @@ def run_lammps_simulation_engine(
                 f.write("\n".join(in_lines))
                 
             lmp_bin = shutil.which("lammps") or shutil.which("lmp") or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes")
-            run_result = subprocess.run(
-                [lmp_bin, "-in", "sim.in"], cwd=temp_dir, check=True,
-                capture_output=True, text=True
-            )
+            log_path = os.path.join(temp_dir, "lammps.log")
+            with open(log_path, "w", encoding="utf-8") as log_f:
+                subprocess.run(
+                    [lmp_bin, "-in", "sim.in"], cwd=temp_dir, check=True,
+                    stdout=log_f, stderr=subprocess.PIPE, text=True
+                )
 
             traj_path = os.path.join(temp_dir, "trajectory.xyz")
             if os.path.exists(traj_path):
                 with open(traj_path, "r", encoding="utf-8") as f:
                     traj_content = f.read()
                 engine_used = "lammps"
-                thermo = _parse_lammps_thermo_log(run_result.stdout)
+                thermo = _parse_lammps_thermo_log_file(log_path)
                 if thermo is not None:
                     pot_energy = thermo["potential_energy_kcal_mol"]
                     final_density = thermo["final_density_g_cm3"]

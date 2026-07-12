@@ -1,4 +1,7 @@
-from ypotheto_compchem_mcp.chemistry.polymer_engine import _parse_lammps_thermo_log
+from ypotheto_compchem_mcp.chemistry.polymer_engine import (
+    _parse_lammps_thermo_log,
+    _parse_lammps_thermo_log_file,
+)
 
 CANNED_LAMMPS_LOG = """LAMMPS (2 Aug 2023)
 Reading data file ...
@@ -64,3 +67,21 @@ def test_returns_none_for_corrupt_or_missing_thermo_output():
 
 def test_returns_none_for_empty_log():
     assert _parse_lammps_thermo_log("") is None
+
+
+def test_file_variant_parses_final_thermo_row_from_log_on_disk(tmp_path):
+    """The file-streaming variant must agree with the in-memory parser, since
+    production runs read the LAMMPS log from disk instead of buffering all of
+    stdout in memory."""
+    log_path = tmp_path / "lammps.log"
+    log_path.write_text(TWO_RUN_LAMMPS_LOG, encoding="utf-8")
+
+    result = _parse_lammps_thermo_log_file(str(log_path))
+    assert result is not None
+    assert result["potential_energy_kcal_mol"] == -128.75
+    assert result["final_density_g_cm3"] == 0.87812345
+
+
+def test_file_variant_returns_none_for_missing_file(tmp_path):
+    missing_path = tmp_path / "does_not_exist.log"
+    assert _parse_lammps_thermo_log_file(str(missing_path)) is None

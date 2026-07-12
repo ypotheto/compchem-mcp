@@ -142,11 +142,12 @@ def test_lammps_simulation_parses_real_thermo_output_when_available():
         "Loop time of 0.01 on 1 procs for 100 steps with 8 atoms\n"
     )
 
-    def fake_subprocess_run(cmd, cwd, check, capture_output, text):
+    def fake_subprocess_run(cmd, cwd, check, stdout, stderr, text):
         traj_path = os.path.join(cwd, "trajectory.xyz")
         with open(traj_path, "w", encoding="utf-8") as f:
             f.write("8\nstep 0\nH 0.0 0.0 0.0\n" * 1)
-        return MagicMock(stdout=canned_stdout, stderr="", returncode=0)
+        stdout.write(canned_stdout)
+        return MagicMock(stdout=None, stderr="", returncode=0)
 
     with patch("ypotheto_compchem_mcp.chemistry.polymer_engine.LAMMPS_AVAILABLE", True), \
          patch("ypotheto_compchem_mcp.chemistry.polymer_engine.subprocess.run", side_effect=fake_subprocess_run), \
