@@ -426,11 +426,20 @@ def run_periodic_dft_engine(
 ) -> Dict[str, Any]:
     """
     Run periodic DFT calculation (or GFN-xTB PBC calculation).
+
+    Unit provenance: the xTB path uses ASE's XTB calculator, which reports
+    energy natively in eV; the PySCF path solves the SCF natively in Hartree.
+    `energy_ev` is always populated (converted from Hartree for the PySCF
+    path). `energy_hartree` is only populated when the underlying method
+    genuinely computed in atomic units (PySCF); for the xTB path it is left
+    as None rather than presented as a native Hartree value, since it would
+    otherwise just be a unit-converted copy of `energy_ev`.
     """
     atoms = load_periodic_structure_engine(workspace_id, molecule_id)
-    
+
     method_upper = method.upper()
     energy_ev = 0.0
+    energy_hartree_native = None
     method_used = ""
 
     if method_upper == "XTB":
@@ -471,8 +480,8 @@ def run_periodic_dft_engine(
                 mf = dft.KRKS(cell, kpts_cell)
 
             mf.xc = 'lda'
-            energy_hartree = mf.kernel()
-            energy_ev = float(energy_hartree * 27.211386)
+            energy_hartree_native = float(mf.kernel())
+            energy_ev = energy_hartree_native * 27.211386
             method_used = "PBC-DFT/LDA/gth-szv"
         except Exception as e:
             raise CalculationFailedError(
@@ -482,16 +491,21 @@ def run_periodic_dft_engine(
 
     results = {
         "energy_ev": energy_ev,
-        "energy_hartree": energy_ev / 27.211386,
+        "energy_hartree": energy_hartree_native,
         "method": method,
         "method_used": method_used
     }
-    
+
+    if energy_hartree_native is not None:
+        energy_note = f" ({energy_hartree_native:.6f} Hartree, native SCF units)."
+    else:
+        energy_note = " (Hartree not reported: xTB computes natively in eV via ASE, so a back-converted value would not reflect a native atomic-unit quantity)."
+
     interpretation = (
         f"Periodic calculation completed successfully using {method}.\n"
-        f"Periodic Potential Energy = {energy_ev:.4f} eV ({results['energy_hartree']:.6f} Hartree)."
+        f"Periodic Potential Energy = {energy_ev:.4f} eV{energy_note}"
     )
-    
+
     return {
         "ok": True,
         "results": results,

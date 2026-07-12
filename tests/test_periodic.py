@@ -139,6 +139,9 @@ def test_slab_adsorbate_dft():
     assert dft_res["ok"] is True
     assert "energy_ev" in dft_res["results"]
     assert dft_res["results"]["method_used"] == "GFN2-xTB (periodic)"
+    # xTB reports energy natively in eV (via ASE); energy_hartree must not be a
+    # back-converted stand-in for a native atomic-unit quantity that was never computed.
+    assert dft_res["results"]["energy_hartree"] is None
 
     # 6. Test FastMCP tool wrappers
     tool_slab = build_surface_slab(bulk_id, miller_indices=[1, 1, 0], layers=2, vacuum_size=5.0)
