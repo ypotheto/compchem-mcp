@@ -2,11 +2,9 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
+from ypotheto_compchem_mcp.chemistry._backend_checks import require_xtb_calculator
 
 logger = logging.getLogger(__name__)
-
-_XTB_UNAVAILABLE_HINT = "Install the xtb binary and the xtb-python ASE calculator, or rerun with method='DFT'."
 
 def _load_atoms_from_xyz(workspace_id: str, molecule_id: str):
     from ypotheto_compchem_mcp.workspace import workspace_manager
@@ -43,16 +41,8 @@ def run_transition_state_search_engine(
     method_upper = method.upper()
     method_used = ""
     if method_upper == "XTB":
-        import shutil
-        if shutil.which("xtb"):
-            from ase.calculators.xtb import XTB
-            atoms.calc = XTB(method="GFN2-xTB")
-            method_used = "GFN2-xTB"
-        else:
-            raise BackendUnavailableError(
-                "xTB backend is not available for transition-state search.",
-                hint=_XTB_UNAVAILABLE_HINT,
-            )
+        atoms.calc = require_xtb_calculator("transition-state search")
+        method_used = "GFN2-xTB"
     else:
         from ypotheto_compchem_mcp.chemistry.qm_engine import PySCFCalculator
         atoms.calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin)
@@ -128,16 +118,8 @@ def run_neb_calculation_engine(
     method_used = ""
     for img in images:
         if method_upper == "XTB":
-            import shutil
-            if shutil.which("xtb"):
-                from ase.calculators.xtb import XTB
-                img.calc = XTB(method="GFN2-xTB")
-                method_used = "GFN2-xTB"
-            else:
-                raise BackendUnavailableError(
-                    "xTB backend is not available for NEB pathway calculations.",
-                    hint=_XTB_UNAVAILABLE_HINT,
-                )
+            img.calc = require_xtb_calculator("NEB pathway calculations")
+            method_used = "GFN2-xTB"
         else:
             from ypotheto_compchem_mcp.chemistry.qm_engine import PySCFCalculator
             img.calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin)

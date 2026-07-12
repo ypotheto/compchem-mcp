@@ -13,6 +13,7 @@ from ase.build import make_supercell
 from ypotheto_compchem_mcp.workspace import workspace_manager
 from ypotheto_compchem_mcp.chemistry.builder_engine import _get_molecules_dir, _load_index, _save_index
 from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
+from ypotheto_compchem_mcp.chemistry._backend_checks import require_xtb_calculator
 
 logger = logging.getLogger(__name__)
 
@@ -443,17 +444,9 @@ def run_periodic_dft_engine(
     method_used = ""
 
     if method_upper == "XTB":
-        import shutil
-        if shutil.which("xtb"):
-            from ase.calculators.xtb import XTB
-            atoms.calc = XTB(method="GFN2-xTB")
-            energy_ev = float(atoms.get_potential_energy())
-            method_used = "GFN2-xTB (periodic)"
-        else:
-            raise BackendUnavailableError(
-                "xTB backend is not available for periodic calculations.",
-                hint="Install the xtb binary and the xtb-python ASE calculator, or rerun with method='DFT'.",
-            )
+        atoms.calc = require_xtb_calculator("periodic calculations")
+        energy_ev = float(atoms.get_potential_energy())
+        method_used = "GFN2-xTB (periodic)"
     else:
         try:
             from pyscf.pbc import gto, dft
