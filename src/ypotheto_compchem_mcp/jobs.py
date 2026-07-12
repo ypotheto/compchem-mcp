@@ -9,6 +9,26 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional
 from ypotheto_compchem_mcp.workspace import workspace_manager
+from ypotheto_compchem_mcp.errors import CompchemError
+
+def _job_error_from_exception(e: Exception) -> Dict[str, Any]:
+    """
+    Background jobs call engine functions directly, bypassing mcp_tool_decorator.
+    Preserve a CompchemError's typed code/hint (e.g. BACKEND_UNAVAILABLE) instead
+    of collapsing every failure into a generic INTERNAL_JOB_ERROR - otherwise an
+    async caller can't distinguish "backend not installed" from "actually crashed".
+    """
+    if isinstance(e, CompchemError):
+        return {
+            "code": e.code,
+            "message": str(e),
+            "hint": e.hint or "Please review log files or retry."
+        }
+    return {
+        "code": "INTERNAL_JOB_ERROR",
+        "message": str(e),
+        "hint": "Please review log files or retry."
+    }
 
 # Import registry helper functions
 _FUNCTIONS_REGISTRY = {}
@@ -434,11 +454,7 @@ class JobManager:
                 job_id,
                 status="failed",
                 progress_message=f"Calculation encountered an error: {str(e)}",
-                error={
-                    "code": "INTERNAL_JOB_ERROR",
-                    "message": str(e),
-                    "hint": "Please review log files or retry."
-                },
+                error=_job_error_from_exception(e),
                 conn=conn
             )
             raise e
@@ -558,11 +574,7 @@ class JobManager:
                 job.end_time = time.time()
                 job.status = "failed"
                 job.progress_message = f"Calculation encountered an error: {str(e)}"
-                job.error = {
-                    "code": "INTERNAL_JOB_ERROR",
-                    "message": str(e),
-                    "hint": "Please review log files or retry."
-                }
+                job.error = _job_error_from_exception(e)
             finally:
                 current_workspace_id.reset(token_var)
                 self._persist_job(job)

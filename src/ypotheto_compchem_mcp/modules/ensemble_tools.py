@@ -1,6 +1,7 @@
 from typing import Optional
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import run_ensemble_thermochemistry_engine
@@ -35,7 +36,10 @@ def run_ensemble_thermochemistry(
     - run_async: If true, runs pipeline in background (highly recommended, default is True).
     """
     if not XTB_AVAILABLE or not CREST_AVAILABLE:
-        raise RuntimeError("CREST and xTB binaries are required to run the ensemble thermochemistry pipeline.")
+        raise BackendUnavailableError(
+            "CREST and xTB binaries are required to run the ensemble thermochemistry pipeline.",
+            hint="Install the crest and xtb binaries to run ensemble thermochemistry."
+        )
         
     workspace_id = get_workspace_id()
     

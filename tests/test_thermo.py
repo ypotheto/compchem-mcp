@@ -63,6 +63,55 @@ def test_run_mixture_flash_sync(mock_julia_and_cantera):
     assert results["liquid_mole_fractions"] == [0.1, 0.9]
     assert results["vapor_mole_fractions"] == [0.8, 0.2]
 
+def test_run_mixture_flash_supports_more_than_two_components(mock_julia_and_cantera):
+    """
+    The Julia snippet's `x[:, 1]` / `x[:, 2]` index PHASES (liquid, vapor), not
+    components - Clapeyron's tp_flash returns a composition matrix shaped
+    (n_components, n_phases). So this already supports any number of components
+    in a two-phase VLE/LLE flash; this test proves that isn't artificially
+    restricted to binary mixtures.
+    """
+    te, tt = mock_julia_and_cantera
+    te.CLAPEYRON_AVAILABLE = True
+    tt.CLAPEYRON_AVAILABLE = True
+
+    te.jl.seval.side_effect = lambda code: (
+        (0.4, 0.6, [0.1, 0.5, 0.4], [0.8, 0.15, 0.05]) if "python_vle_flash" in code or "tp_flash" in code
+        else None
+    )
+
+    res = tt.run_mixture_flash(
+        components=["methane", "ethane", "propane"],
+        mole_fractions=[0.3, 0.3, 0.4],
+        temperature_k=250.0,
+        pressure_pa=1e6,
+        model="PC-SAFT",
+        flash_type="VLE",
+        run_async=False
+    )
+
+    assert res["ok"] is True
+    results = res["results"]
+    assert results["liquid_mole_fractions"] == [0.1, 0.5, 0.4]
+    assert results["vapor_mole_fractions"] == [0.8, 0.15, 0.05]
+
+
+def test_run_mixture_flash_rejects_mismatched_lengths(mock_julia_and_cantera):
+    te, tt = mock_julia_and_cantera
+    te.CLAPEYRON_AVAILABLE = True
+    tt.CLAPEYRON_AVAILABLE = True
+
+    res = tt.run_mixture_flash(
+        components=["ethanol", "water", "methanol"],
+        mole_fractions=[0.4, 0.6],
+        temperature_k=350.0,
+        pressure_pa=101325.0,
+        run_async=False
+    )
+    assert res["ok"] is False
+    assert res["error"]["code"] == "INVALID_ARGUMENT"
+
+
 def test_run_mixture_flash_async(mock_julia_and_cantera):
     te, tt = mock_julia_and_cantera
     
@@ -122,3 +171,33 @@ def test_calculate_transport_properties(mock_julia_and_cantera):
     assert results["viscosity_pa_s"] == 1.8e-5
     assert results["thermal_conductivity_w_m_k"] == 0.026
     assert len(results["binary_diffusion_coefficients_m2_s"]) == 2
+
+
+def test_calculate_transport_properties_unsupported_model(mock_julia_and_cantera):
+    te, tt = mock_julia_and_cantera
+    te.CANTERA_AVAILABLE = True
+
+    res = tt.calculate_transport_properties(
+        components=["CH4", "O2"],
+        mole_fractions=[0.3, 0.7],
+        temperature_k=300.0,
+        pressure_pa=101325.0,
+        model="SomeUnsupportedModel"
+    )
+    assert res["ok"] is False
+    assert res["error"]["code"] == "INVALID_ARGUMENT"
+
+
+def test_run_mixture_flash_rejects_mismatched_lengths_transport(mock_julia_and_cantera):
+    te, tt = mock_julia_and_cantera
+    te.CANTERA_AVAILABLE = True
+
+    res = tt.calculate_transport_properties(
+        components=["CH4", "O2", "N2"],
+        mole_fractions=[0.3, 0.7],
+        temperature_k=300.0,
+        pressure_pa=101325.0,
+        model="Cantera"
+    )
+    assert res["ok"] is False
+    assert res["error"]["code"] == "INVALID_ARGUMENT"

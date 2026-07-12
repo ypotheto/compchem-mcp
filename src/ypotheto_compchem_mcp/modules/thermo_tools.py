@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
+from ypotheto_compchem_mcp.errors import ValidationError
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.thermo_engine import (
@@ -37,7 +38,12 @@ def run_mixture_flash(
     """
     if not CLAPEYRON_AVAILABLE:
         raise RuntimeError("Clapeyron.jl/juliacall is not available or Julia environment is not set up.")
-        
+
+    if len(components) != len(mole_fractions):
+        raise ValidationError(
+            f"components ({len(components)}) and mole_fractions ({len(mole_fractions)}) must have the same length."
+        )
+
     if abs(sum(mole_fractions) - 1.0) > 1e-4:
         return make_error_response("INVALID_ARGUMENT", "Mole fractions must sum to 1.0.")
         
@@ -157,9 +163,14 @@ def calculate_transport_properties(
     - pressure_pa: Pressure in Pascals
     - model: Underlying model engine ('Cantera')
     """
+    if len(components) != len(mole_fractions):
+        raise ValidationError(
+            f"components ({len(components)}) and mole_fractions ({len(mole_fractions)}) must have the same length."
+        )
+
     if abs(sum(mole_fractions) - 1.0) > 1e-4:
         return make_error_response("INVALID_ARGUMENT", "Mole fractions must sum to 1.0.")
-        
+
     res = calculate_transport_properties_engine(components, mole_fractions, temperature_k, pressure_pa, model)
     if not res["ok"]:
         return make_error_response(res["error"]["code"], res["error"]["message"])

@@ -4,6 +4,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel
 from ypotheto_compchem_mcp import __version__
+from ypotheto_compchem_mcp.errors import CompchemError
 
 class WarningInfo(BaseModel):
     type: str
@@ -76,6 +77,8 @@ def mcp_tool_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         # 2. Execute tool
         try:
             return func(*args, **kwargs)
+        except CompchemError as ce:
+            return make_error_response(ce.code, str(ce), ce.hint)
         except ValueError as ve:
             # Map standard value errors (e.g. invalid SMILES or missing coordinates)
             return make_error_response("INVALID_ARGUMENT", str(ve))

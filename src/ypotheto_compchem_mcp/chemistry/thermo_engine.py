@@ -3,6 +3,8 @@ import sys
 import logging
 from typing import Any, Dict, List, Optional
 
+from ypotheto_compchem_mcp.errors import ValidationError
+
 logger = logging.getLogger(__name__)
 
 # 1. Initialize Cantera availability
@@ -272,4 +274,7 @@ def calculate_transport_properties_engine(
                 }
             }
     else:
-        raise NotImplementedError("Only Cantera transport model is currently supported.")
+        raise ValidationError(
+            f"Unknown transport model '{model}'.",
+            hint="Supported model values are: 'Cantera'."
+        )

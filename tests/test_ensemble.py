@@ -114,5 +114,5 @@ def test_ensemble_pipeline_missing_binaries_graceful_fail():
     
     res = run_ensemble_thermochemistry(molecule_id, run_async=False)
     assert res["ok"] is False
-    assert res["error"]["code"] == "INTERNAL_ERROR"
+    assert res["error"]["code"] == "BACKEND_UNAVAILABLE"
     assert "CREST and xTB binaries are required" in res["error"]["message"]

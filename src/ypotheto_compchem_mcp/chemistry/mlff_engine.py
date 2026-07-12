@@ -2,6 +2,8 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -11,7 +13,11 @@ except ImportError:
     CHGNET_AVAILABLE = False
 
 try:
-    from mace.calculators import MACECalculator
+    # mace_off loads a pretrained MACE-OFF23 organic-chemistry foundation model with no
+    # explicit weights path required (mirrors CHGNetCalculator()'s zero-arg convenience).
+    # The raw MACECalculator class requires an explicit model_paths/models argument that
+    # this integration never supplied, so it could never construct successfully.
+    from mace.calculators import mace_off
     MACE_AVAILABLE = True
 except ImportError:
     MACE_AVAILABLE = False
@@ -30,20 +36,37 @@ def _load_structure(workspace_id: str, molecule_id: str):
 
 def _get_mlff_calculator(model_name: str):
     model_upper = model_name.upper()
-    if model_upper == "CHGNET" and CHGNET_AVAILABLE:
+    if model_upper == "CHGNET":
+        if not CHGNET_AVAILABLE:
+            raise BackendUnavailableError(
+                "The CHGNet MLFF model could not be loaded (chgnet is not installed).",
+                hint="Install chgnet, or use run_xtb_calculation / optimize_geometry instead.",
+            )
         try:
             return CHGNetCalculator()
         except Exception as e:
-            logger.warning(f"Failed to load CHGNet model: {str(e)}")
-    elif model_upper == "MACE" and MACE_AVAILABLE:
+            raise BackendUnavailableError(
+                f"Failed to load CHGNet model: {str(e)}",
+                hint="Install chgnet, or use run_xtb_calculation / optimize_geometry instead.",
+            ) from e
+    elif model_upper == "MACE":
+        if not MACE_AVAILABLE:
+            raise BackendUnavailableError(
+                "The MACE MLFF model could not be loaded (mace-torch is not installed).",
+                hint="Install mace-torch, or use run_xtb_calculation / optimize_geometry instead.",
+            )
         try:
-            return MACECalculator(default_dtype="float32")
+            return mace_off(default_dtype="float32")
         except Exception as e:
-            logger.warning(f"Failed to load MACE model: {str(e)}")
-            
-    from ase.calculators.lj import LennardJones
-    logger.warning(f"MLFF model {model_name} not available. Falling back to LennardJones.")
-    return LennardJones(sigma=2.0, epsilon=0.01)
+            raise BackendUnavailableError(
+                f"Failed to load MACE model: {str(e)}",
+                hint="Install mace-torch, or use run_xtb_calculation / optimize_geometry instead.",
+            ) from e
+
+    raise BackendUnavailableError(
+        f"Unknown MLFF model '{model_name}'.",
+        hint="Supported model_name values are 'CHGNet' or 'MACE'.",
+    )
 
 def run_mlff_optimization_engine(
     workspace_id: str,
@@ -106,7 +129,8 @@ def run_mlff_optimization_engine(
             "optimized_molecule_id": opt_id,
             "formula": formula,
             "energy_ev": energy_ev,
-            "num_atoms": len(atoms)
+            "num_atoms": len(atoms),
+            "method_used": model_name
         },
         "interpretation": f"Structure optimized successfully using {model_name}.\nFinal Energy = {energy_ev:.4f} eV."
     }
@@ -158,7 +182,8 @@ def run_mlff_molecular_dynamics_engine(
     results = {
         "trajectory_file_url": traj_art.url,
         "potential_energy_ev": float(atoms.get_potential_energy()),
-        "model_name": model_name
+        "model_name": model_name,
+        "method_used": model_name
     }
     
     interpretation = (

@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock
 from rdkit import Chem
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine, load_molecule_from_workspace
 from ypotheto_compchem_mcp.workspace import get_workspace_id
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.chemistry.xtb_engine import (
     run_xtb_calculation_engine,
     run_conformer_search_engine
@@ -12,15 +13,25 @@ from ypotheto_compchem_mcp.modules.xtb_tools import run_xtb_calculation, run_con
 
 def test_xtb_missing_throws():
     with patch("ypotheto_compchem_mcp.chemistry.xtb_engine.XTB_AVAILABLE", False):
-        with pytest.raises(RuntimeError) as exc:
+        with pytest.raises(BackendUnavailableError) as exc:
             run_xtb_calculation_engine("ws", "mol", "single_point")
         assert "xtb executable is not available" in str(exc.value)
 
+    with patch("ypotheto_compchem_mcp.modules.xtb_tools.XTB_AVAILABLE", False):
+        tool_res = run_xtb_calculation("mol", task="single_point", run_async=False)
+    assert tool_res["ok"] is False
+    assert tool_res["error"]["code"] == "BACKEND_UNAVAILABLE"
+
 def test_crest_missing_throws():
     with patch("ypotheto_compchem_mcp.chemistry.xtb_engine.CREST_AVAILABLE", False):
-        with pytest.raises(RuntimeError) as exc:
+        with pytest.raises(BackendUnavailableError) as exc:
             run_conformer_search_engine("ws", "mol")
         assert "crest or xtb executable is not available" in str(exc.value)
+
+    with patch("ypotheto_compchem_mcp.modules.xtb_tools.CREST_AVAILABLE", False):
+        tool_res = run_conformer_search("mol", run_async=False)
+    assert tool_res["ok"] is False
+    assert tool_res["error"]["code"] == "BACKEND_UNAVAILABLE"
 
 @patch("ypotheto_compchem_mcp.chemistry.xtb_engine.XTB_AVAILABLE", True)
 @patch("subprocess.run")

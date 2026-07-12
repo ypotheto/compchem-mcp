@@ -22,6 +22,60 @@ logger = logging.getLogger(__name__)
 PACKMOL_AVAILABLE = bool(shutil.which("packmol"))
 LAMMPS_AVAILABLE = bool(shutil.which("lammps") or shutil.which("lmp") or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes"))
 
+
+def _parse_lammps_thermo_log(log_text: str) -> Optional[Dict[str, float]]:
+    """
+    Parse the final thermo row from LAMMPS stdout produced by
+    `thermo_style custom step temp press pe ke etotal density`, which LAMMPS
+    prints with the header tokens Step/Temp/Press/PotEng/KinEng/TotEng/Density.
+    Returns None if the expected header/rows cannot be found.
+
+    The generated input script issues an initial `run 0` (before the ensemble
+    fix is even applied) followed by the real production `run {steps}` - and
+    LAMMPS reprints the thermo header for every `run` invocation. This uses
+    the LAST header occurrence, not the first, so it reads the production
+    run's final row instead of the pre-equilibration `run 0` row.
+    """
+    lines = log_text.splitlines()
+    header_tokens = None
+    header_line_idx = None
+    for i, line in enumerate(lines):
+        tokens = line.split()
+        if "PotEng" in tokens and "Density" in tokens:
+            header_tokens = tokens
+            header_line_idx = i
+
+    if header_tokens is None:
+        return None
+
+    try:
+        pe_idx = header_tokens.index("PotEng")
+        density_idx = header_tokens.index("Density")
+    except ValueError:
+        return None
+
+    last_row = None
+    for line in lines[header_line_idx + 1:]:
+        tokens = line.split()
+        if len(tokens) != len(header_tokens):
+            break
+        try:
+            row = [float(t) for t in tokens]
+        except ValueError:
+            break
+        last_row = row
+
+    if last_row is None:
+        return None
+
+    try:
+        return {
+            "potential_energy_kcal_mol": last_row[pe_idx],
+            "final_density_g_cm3": last_row[density_idx],
+        }
+    except IndexError:
+        return None
+
 try:
     import MDAnalysis as mda
     MDANALYSIS_AVAILABLE = True
@@ -392,9 +446,11 @@ def run_lammps_simulation_engine(
             pass
             
     traj_content = ""
-    pot_energy = -150.0
-    final_density = 0.9
-    
+    pot_energy = None
+    final_density = None
+    engine_used = None
+    warnings: List[Dict[str, str]] = []
+
     if LAMMPS_AVAILABLE:
         temp_dir = tempfile.mkdtemp()
         try:
@@ -463,24 +519,45 @@ def run_lammps_simulation_engine(
                 f.write("\n".join(in_lines))
                 
             lmp_bin = shutil.which("lammps") or shutil.which("lmp") or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes")
-            subprocess.run([lmp_bin, "-in", "sim.in"], cwd=temp_dir, check=True, stdout=subprocess.DEVNULL)
-            
+            run_result = subprocess.run(
+                [lmp_bin, "-in", "sim.in"], cwd=temp_dir, check=True,
+                capture_output=True, text=True
+            )
+
             traj_path = os.path.join(temp_dir, "trajectory.xyz")
             if os.path.exists(traj_path):
                 with open(traj_path, "r", encoding="utf-8") as f:
                     traj_content = f.read()
+                engine_used = "lammps"
+                thermo = _parse_lammps_thermo_log(run_result.stdout)
+                if thermo is not None:
+                    pot_energy = thermo["potential_energy_kcal_mol"]
+                    final_density = thermo["final_density_g_cm3"]
+                else:
+                    logger.warning("LAMMPS ran successfully but thermo output could not be parsed.")
+                    warnings.append({
+                        "type": "parse_failure",
+                        "message": "LAMMPS completed but its thermo output could not be parsed; "
+                                   "potential_energy_kcal_mol and final_density_g_cm3 are unavailable."
+                    })
         except Exception as e:
-            logger.warning(f"LAMMPS run failed: {str(e)}. Falling back to ASE simulation.")
+            stderr = getattr(e, "stderr", None)
+            if stderr:
+                logger.warning(f"LAMMPS run failed: {str(e)}. stderr: {stderr}. Falling back to ASE simulation.")
+            else:
+                logger.warning(f"LAMMPS run failed: {str(e)}. Falling back to ASE simulation.")
         finally:
             shutil.rmtree(temp_dir)
-            
+
     if not traj_content:
-        # ASE Fallback Simulation
+        # ASE Fallback Simulation - uses a generic Lennard-Jones potential, NOT LAMMPS.
+        # This produces a plausible-looking trajectory for pipeline/plumbing purposes only;
+        # the energies and densities below are not physically meaningful for the requested system.
         from ase import Atoms
         from ase.calculators.lj import LennardJones
         from ase.md.langevin import Langevin
         from ase import units
-        
+
         symbols = []
         positions = []
         for line in lines[2:]:
@@ -488,50 +565,73 @@ def run_lammps_simulation_engine(
             if len(parts) >= 4:
                 symbols.append(parts[0])
                 positions.append([float(parts[1]), float(parts[2]), float(parts[3])])
-                
+
         atoms = Atoms(symbols=symbols, positions=positions, cell=[box_size, box_size, box_size], pbc=True)
         atoms.calc = LennardJones(sigma=3.5, epsilon=0.01)
-        
+
         dyn = Langevin(atoms, timestep_fs * units.fs, temperature_K=temperature_k, friction=0.01)
-        
+
         traj_out = [f"{len(atoms)}", f"ASE trajectory step 0"]
         for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
             traj_out.append(f"{sym} {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}")
-            
+
         for _ in range(5):
             dyn.run(steps // 5)
             traj_out.append(f"{len(atoms)}")
             traj_out.append(f"ASE trajectory step {_}")
             for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
                 traj_out.append(f"{sym} {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}")
-                
+
         traj_content = "\n".join(traj_out)
         final_density = float(len(atoms) * 12.011 / (6.022e23 * (box_size * 1e-8) ** 3))
         pot_energy = float(atoms.get_potential_energy() * 23.06)
-        
+        engine_used = "ase-lj-fallback"
+        warnings.append({
+            "type": "fallback",
+            "message": "LAMMPS unavailable — trajectory generated with a generic Lennard-Jones "
+                       "potential. Energies and densities are NOT physically meaningful for this system."
+        })
+
     # Save trajectory to artifact store
     traj_filename = f"{packed_cell_id}_trajectory.xyz"
     from ypotheto_compchem_mcp.artifacts import register_artifact
     traj_art = register_artifact(traj_filename, traj_content.encode("utf-8"), "trajectory", f"MD Trajectory for {packed_cell_id}")
-    
+
+    # final_density_g_cm3/potential_energy_kcal_mol can be None even when
+    # engine_used == "lammps" (a real run whose thermo output failed to parse) -
+    # callers must check `warnings` before treating these as trustworthy, not just
+    # engine_used.
     results = {
         "final_density_g_cm3": final_density,
         "potential_energy_kcal_mol": pot_energy,
-        "trajectory_file_url": traj_art.url
+        "trajectory_file_url": traj_art.url,
+        "engine_used": engine_used
     }
-    
-    interpretation = (
-        f"LAMMPS simulation completed successfully.\n"
-        f"Ensemble: {ensemble.upper()}, Steps: {steps}, Temperature: {temperature_k} K.\n"
-        f"Final density = {final_density:.4f} g/cm3.\n"
-        f"Potential Energy = {pot_energy:.2f} kcal/mol."
-    )
-    
+
+    if engine_used == "lammps":
+        density_str = f"{final_density:.4f}" if final_density is not None else "unavailable"
+        energy_str = f"{pot_energy:.2f}" if pot_energy is not None else "unavailable"
+        interpretation = (
+            f"LAMMPS simulation completed successfully.\n"
+            f"Ensemble: {ensemble.upper()}, Steps: {steps}, Temperature: {temperature_k} K.\n"
+            f"Final density = {density_str} g/cm3.\n"
+            f"Potential Energy = {energy_str} kcal/mol."
+        )
+    else:
+        interpretation = (
+            f"LAMMPS was not available — ran a generic Lennard-Jones ASE simulation instead.\n"
+            f"Ensemble: {ensemble.upper()}, Steps: {steps}, Temperature: {temperature_k} K.\n"
+            f"These results (density = {final_density:.4f} g/cm3, "
+            f"potential energy = {pot_energy:.2f} kcal/mol) are illustrative only and "
+            f"are NOT physically meaningful for this specific system."
+        )
+
     return {
         "ok": True,
         "results": results,
         "interpretation": interpretation,
-        "artifacts": [traj_art]
+        "artifacts": [traj_art],
+        "warnings": warnings
     }
 
 

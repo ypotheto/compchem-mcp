@@ -1,5 +1,9 @@
+import sys
+import types
 import pytest
+from unittest.mock import patch
 from ypotheto_compchem_mcp.workspace import get_workspace_id
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.chemistry.periodic_engine import (
     import_periodic_structure_engine,
     analyze_crystal_symmetry_engine,
@@ -116,19 +120,39 @@ def test_slab_adsorbate_dft():
     ads_res = add_adsorbate_to_surface_engine(workspace_id, slab_id, "mol_co", height=1.6, position_type="ontop")
     assert ads_res["ok"] is True
     combined_id = ads_res["results"]["combined_molecule_id"]
-    
-    # 5. Run periodic boundary calculation (sync)
-    dft_res = run_periodic_dft_engine(workspace_id, combined_id, kpts=[1, 1, 1], method="xTB")
+
+    # 5. Run periodic boundary calculation (sync) - no xtb binary is installed in this
+    # environment, so the engine must raise BackendUnavailableError rather than
+    # silently substituting a Lennard-Jones potential.
+    with pytest.raises(BackendUnavailableError):
+        run_periodic_dft_engine(workspace_id, combined_id, kpts=[1, 1, 1], method="xTB")
+
+    # Smoke-test the real plumbing (calculator assignment, energy conversion, artifact
+    # save) using a fake XTB calculator explicitly injected by the test via sys.modules
+    # (ase.calculators.xtb isn't installed in this environment).
+    from ase.calculators.lj import LennardJones
+    fake_xtb_module = types.ModuleType("ase.calculators.xtb")
+    fake_xtb_module.XTB = LennardJones
+    with patch("shutil.which", return_value="/usr/bin/xtb"), \
+         patch.dict(sys.modules, {"ase.calculators.xtb": fake_xtb_module}):
+        dft_res = run_periodic_dft_engine(workspace_id, combined_id, kpts=[1, 1, 1], method="xTB")
     assert dft_res["ok"] is True
     assert "energy_ev" in dft_res["results"]
-    
+    assert dft_res["results"]["method_used"] == "GFN2-xTB (periodic)"
+
     # 6. Test FastMCP tool wrappers
     tool_slab = build_surface_slab(bulk_id, miller_indices=[1, 1, 0], layers=2, vacuum_size=5.0)
     assert tool_slab["ok"] is True
-    
+
     tool_ads = add_adsorbate_to_surface(tool_slab["results"]["slab_molecule_id"], "mol_co", height=1.2, position_type="0.2,0.2")
     assert tool_ads["ok"] is True
-    
-    tool_dft = run_periodic_dft(tool_ads["results"]["combined_molecule_id"], kpts=[1, 1, 1], method="xTB", run_async=False)
+
+    tool_dft_unavailable = run_periodic_dft(tool_ads["results"]["combined_molecule_id"], kpts=[1, 1, 1], method="xTB", run_async=False)
+    assert tool_dft_unavailable["ok"] is False
+    assert tool_dft_unavailable["error"]["code"] == "BACKEND_UNAVAILABLE"
+
+    with patch("shutil.which", return_value="/usr/bin/xtb"), \
+         patch.dict(sys.modules, {"ase.calculators.xtb": fake_xtb_module}):
+        tool_dft = run_periodic_dft(tool_ads["results"]["combined_molecule_id"], kpts=[1, 1, 1], method="xTB", run_async=False)
     assert tool_dft["ok"] is True
     assert "energy_ev" in tool_dft["results"]

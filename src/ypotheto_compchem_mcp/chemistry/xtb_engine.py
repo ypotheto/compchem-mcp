@@ -11,6 +11,7 @@ from ypotheto_compchem_mcp.chemistry.builder_engine import (
     load_molecule_from_workspace,
     save_molecule_coords
 )
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,10 @@ def run_xtb_calculation_engine(
     Run semi-empirical GFN-xTB calculations via subprocess.
     """
     if not XTB_AVAILABLE:
-        raise RuntimeError("xtb executable is not available on this system host.")
+        raise BackendUnavailableError(
+            "xtb executable is not available on this system host.",
+            hint="Install the xtb binary, or use run_single_point / optimize_geometry (PySCF) instead."
+        )
         
     mol = load_molecule_from_workspace(workspace_id, molecule_id)
     
@@ -179,7 +183,10 @@ def run_conformer_search_engine(
     Generate conformer ensembles using CREST.
     """
     if not CREST_AVAILABLE or not XTB_AVAILABLE:
-        raise RuntimeError("crest or xtb executable is not available on this system host.")
+        raise BackendUnavailableError(
+            "crest or xtb executable is not available on this system host.",
+            hint="Install the crest and xtb binaries to run conformer ensemble searches."
+        )
         
     mol = load_molecule_from_workspace(workspace_id, molecule_id)
     

@@ -1,6 +1,7 @@
 from typing import Optional
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.xtb_engine import (
@@ -35,7 +36,10 @@ def run_xtb_calculation(
     - run_async: If true, runs calculation in background and returns job ID immediately.
     """
     if not XTB_AVAILABLE:
-        raise RuntimeError("xtb executable is not available on this system host.")
+        raise BackendUnavailableError(
+            "xtb executable is not available on this system host.",
+            hint="Install the xtb binary, or use run_single_point / optimize_geometry (PySCF) instead."
+        )
         
     workspace_id = get_workspace_id()
     
@@ -113,7 +117,10 @@ def run_conformer_search(
     - run_async: If true, runs CREST in background (strongly recommended, default is True).
     """
     if not CREST_AVAILABLE:
-        raise RuntimeError("crest executable is not available on this system host.")
+        raise BackendUnavailableError(
+            "crest executable is not available on this system host.",
+            hint="Install the crest binary to run conformer ensemble searches."
+        )
         
     workspace_id = get_workspace_id()
     

@@ -555,7 +555,7 @@ def run_pyscf_properties_engine(
     }
     
     mull_str = ", ".join(f"{c['element']}{c['index']}:{round(c['charge'], 3)}" for c in mulliken_charges[:4])
-    loew_str = ", ".join(f"{c['element']}{c['index']}:{round(c['charge'], 3)}" for c in loew_charges[:4])
+    loew_str = ", ".join(f"{c['element']}{c['index']}:{round(c['charge'], 3)}" for c in loewdin_charges[:4])
     
     interpretation = (
         f"Calculated expanded properties for {molecule_id}.\n"

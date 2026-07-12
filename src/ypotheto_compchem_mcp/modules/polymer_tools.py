@@ -216,6 +216,7 @@ def run_lammps_simulation(
         results=res["results"],
         interpretation=res["interpretation"],
         artifacts=res.get("artifacts", []),
+        warnings=res.get("warnings", []),
         meta={"packed_molecule_id": packed_molecule_id}
     )
 

@@ -2,7 +2,11 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional
 
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
+
 logger = logging.getLogger(__name__)
+
+_XTB_UNAVAILABLE_HINT = "Install the xtb binary and the xtb-python ASE calculator, or rerun with method='DFT'."
 
 def _load_atoms_from_xyz(workspace_id: str, molecule_id: str):
     from ypotheto_compchem_mcp.workspace import workspace_manager
@@ -37,18 +41,23 @@ def run_transition_state_search_engine(
     atoms = _load_atoms_from_xyz(workspace_id, molecule_id)
     
     method_upper = method.upper()
+    method_used = ""
     if method_upper == "XTB":
         import shutil
         if shutil.which("xtb"):
             from ase.calculators.xtb import XTB
             atoms.calc = XTB(method="GFN2-xTB")
+            method_used = "GFN2-xTB"
         else:
-            from ase.calculators.lj import LennardJones
-            atoms.calc = LennardJones(sigma=2.0, epsilon=0.01)
+            raise BackendUnavailableError(
+                "xTB backend is not available for transition-state search.",
+                hint=_XTB_UNAVAILABLE_HINT,
+            )
     else:
         from ypotheto_compchem_mcp.chemistry.qm_engine import PySCFCalculator
         atoms.calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin)
-        
+        method_used = f"{method.upper()}/{functional}/{basis}"
+
     from sella import Sella
     opt = Sella(atoms, logfile=None)
     opt.run(fmax=0.05, steps=50)
@@ -80,7 +89,8 @@ def run_transition_state_search_engine(
         "ts_molecule_id": ts_id,
         "name": ts_name,
         "energy_ev": energy_ev,
-        "num_atoms": len(atoms)
+        "num_atoms": len(atoms),
+        "method_used": method_used
     }
 
 def run_neb_calculation_engine(
@@ -115,19 +125,24 @@ def run_neb_calculation_engine(
         neb.interpolate(method='linear')
         
     method_upper = method.upper()
+    method_used = ""
     for img in images:
         if method_upper == "XTB":
             import shutil
             if shutil.which("xtb"):
                 from ase.calculators.xtb import XTB
                 img.calc = XTB(method="GFN2-xTB")
+                method_used = "GFN2-xTB"
             else:
-                from ase.calculators.lj import LennardJones
-                img.calc = LennardJones(sigma=2.0, epsilon=0.01)
+                raise BackendUnavailableError(
+                    "xTB backend is not available for NEB pathway calculations.",
+                    hint=_XTB_UNAVAILABLE_HINT,
+                )
         else:
             from ypotheto_compchem_mcp.chemistry.qm_engine import PySCFCalculator
             img.calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin)
-            
+            method_used = f"{method.upper()}/{functional}/{basis}"
+
     from ase.optimize import BFGS
     opt = BFGS(neb, logfile=None)
     opt.run(fmax=0.05, steps=50)
@@ -188,7 +203,8 @@ def run_neb_calculation_engine(
         "activation_energy_barrier_ev": energy_barrier_ev,
         "activation_energy_barrier_kcal_mol": energy_barrier_kcal,
         "energies_ev": energies,
-        "image_molecule_ids": image_ids
+        "image_molecule_ids": image_ids,
+        "method_used": method_used
     }
     
     interpretation = (

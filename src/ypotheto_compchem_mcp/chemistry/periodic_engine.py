@@ -12,6 +12,7 @@ from ase.build import make_supercell
 
 from ypotheto_compchem_mcp.workspace import workspace_manager
 from ypotheto_compchem_mcp.chemistry.builder_engine import _get_molecules_dir, _load_index, _save_index
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 
 logger = logging.getLogger(__name__)
 
@@ -430,20 +431,30 @@ def run_periodic_dft_engine(
     
     method_upper = method.upper()
     energy_ev = 0.0
-    
+    method_used = ""
+
     if method_upper == "XTB":
         import shutil
         if shutil.which("xtb"):
             from ase.calculators.xtb import XTB
             atoms.calc = XTB(method="GFN2-xTB")
             energy_ev = float(atoms.get_potential_energy())
+            method_used = "GFN2-xTB (periodic)"
         else:
-            from ase.calculators.lj import LennardJones
-            atoms.calc = LennardJones(sigma=2.0, epsilon=0.01)
-            energy_ev = float(atoms.get_potential_energy())
+            raise BackendUnavailableError(
+                "xTB backend is not available for periodic calculations.",
+                hint="Install the xtb binary and the xtb-python ASE calculator, or rerun with method='DFT'.",
+            )
     else:
         try:
             from pyscf.pbc import gto, dft
+        except ImportError as e:
+            raise BackendUnavailableError(
+                f"PySCF (with PBC support) is not installed: {str(e)}",
+                hint="Install pyscf, or rerun with method='xTB'.",
+            ) from e
+
+        try:
             cell = gto.Cell()
             cell.atom = []
             for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
@@ -452,26 +463,28 @@ def run_periodic_dft_engine(
             cell.basis = "gth-szv"
             cell.pseudo = "gth-pade"
             cell.build()
-            
+
             if list(kpts) == [1, 1, 1]:
                 mf = dft.RKS(cell)
             else:
                 kpts_cell = cell.make_kpts(kpts)
                 mf = dft.KRKS(cell, kpts_cell)
-                
+
             mf.xc = 'lda'
             energy_hartree = mf.kernel()
             energy_ev = float(energy_hartree * 27.211386)
+            method_used = "PBC-DFT/LDA/gth-szv"
         except Exception as e:
-            logger.warning(f"PySCF PBC DFT failed or not installed: {str(e)}. Falling back to LJ.")
-            from ase.calculators.lj import LennardJones
-            atoms.calc = LennardJones(sigma=2.0, epsilon=0.01)
-            energy_ev = float(atoms.get_potential_energy())
-            
+            raise CalculationFailedError(
+                f"Periodic DFT calculation failed: {str(e)}",
+                hint="Try a smaller k-point grid, a minimal basis, or method='xTB'.",
+            ) from e
+
     results = {
         "energy_ev": energy_ev,
         "energy_hartree": energy_ev / 27.211386,
-        "method": method
+        "method": method,
+        "method_used": method_used
     }
     
     interpretation = (
