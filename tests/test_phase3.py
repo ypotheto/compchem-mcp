@@ -61,6 +61,9 @@ def test_run_single_point_sync(mock_engine, mock_est):
     assert envelope["results"]["energy_hartree"] == -76.01
     assert "Single-point calculation completed" in envelope["interpretation"]
     assert len(envelope["artifacts"]) == 1
+    assert envelope["meta"]["provenance"]["software"] == "pyscf"
+    assert envelope["meta"]["provenance"]["method"] == "DFT"
+    assert envelope["meta"]["provenance"]["basis"] == "sto-3g"
 
 @patch("ypotheto_compchem_mcp.modules.quantum_tools.PYSCF_AVAILABLE", True)
 @patch("ypotheto_compchem_mcp.modules.quantum_tools._estimate_time_seconds", return_value=15)

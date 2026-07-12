@@ -4,8 +4,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')
+from ypotheto_compchem_mcp.utils import plotting as _plotting  # noqa: F401  (import sets the Agg backend before pyplot is touched)
 import matplotlib.pyplot as plt
 from ase import Atoms, units
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution

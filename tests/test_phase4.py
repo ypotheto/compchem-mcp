@@ -44,6 +44,8 @@ def test_vibrations_tools_sync(mock_est):
     assert envelope["ok"] is True
     assert "zero_point_energy_ev" in envelope["results"]
     assert len(envelope["artifacts"]) == 1
+    assert envelope["meta"]["provenance"]["software"] == "rdkit"
+    assert envelope["meta"]["provenance"]["method"] == "MMFF94"
     
     # Call simulate_ir_spectrum tool synchronously
     ir_envelope = simulate_ir_spectrum(molecule_id, method="MMFF94", run_async=False)

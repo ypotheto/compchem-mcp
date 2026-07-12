@@ -92,6 +92,14 @@ def test_preflight_mcp_tool():
     assert tool_res["ok"] is True
     assert tool_res["results"]["preflight_passed"] is True
     assert tool_res["results"]["validation"]["total_electrons"] == 10
+
+    # Compute-credits estimate is surfaced as advisory info: present in the
+    # machine-readable results AND mentioned in the interpretation string, so
+    # the client LLM can warn users before launching an expensive job. This is
+    # advisory only - nothing here enforces or bills against it.
+    assert "compute_credits_cost" in tool_res["results"]["estimates"]
+    assert tool_res["results"]["estimates"]["compute_credits_cost"] >= 0
+    assert "credits" in tool_res["interpretation"]
     
     # Run preflight tool (invalid doublet water sto-3g)
     tool_res_fail = run_scientific_preflight(molecule_id, method="DFT", basis="sto-3g", charge=0, spin=2, task="single_point")

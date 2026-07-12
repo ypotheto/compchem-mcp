@@ -1,6 +1,6 @@
 import json
 from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
+from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response, build_provenance
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
@@ -87,6 +87,13 @@ def calculate_vibrations(
         f"Gibbs Free Energy = {res['results']['thermochemistry']['gibbs_free_energy_ev']:.4f} eV."
     )
     
+    is_force_field = method.upper() in ("MMFF94", "UFF")
+    provenance = (
+        build_provenance("rdkit", method=method)
+        if is_force_field
+        else build_provenance("pyscf", method=method, functional=functional, basis=basis)
+    )
+
     return make_success_response(
         results=res["results"],
         interpretation=interpretation,
@@ -94,7 +101,8 @@ def calculate_vibrations(
         artifacts=[report_art],
         meta={
             "molecule_id": molecule_id,
-            "method": f"{method}/{basis}"
+            "method": f"{method}/{basis}",
+            "provenance": provenance
         }
     )
 

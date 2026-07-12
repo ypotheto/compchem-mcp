@@ -1,6 +1,6 @@
 from typing import Optional, List
 from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
+from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response, build_provenance
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
@@ -135,7 +135,8 @@ def run_single_point(
         artifacts=[report_art],
         meta={
             "molecule_id": molecule_id,
-            "method": f"{method}/{functional}/{basis}"
+            "method": f"{method}/{functional}/{basis}",
+            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
         }
     )
 
@@ -243,7 +244,8 @@ def optimize_geometry(
         meta={
             "molecule_id": molecule_id,
             "optimized_molecule_id": opt_mol_id,
-            "method": f"{method}/{functional}/{basis}"
+            "method": f"{method}/{functional}/{basis}",
+            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
         }
     )
 
@@ -341,7 +343,8 @@ def run_pyscf_properties(
         artifacts=res["results"].get("artifacts", []),
         meta={
             "molecule_id": molecule_id,
-            "method": f"{method}/{functional}/{basis}"
+            "method": f"{method}/{functional}/{basis}",
+            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
         }
     )
 
