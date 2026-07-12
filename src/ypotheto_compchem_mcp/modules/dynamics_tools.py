@@ -5,7 +5,7 @@ from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.md_engine import run_molecular_dynamics_engine
-from ypotheto_compchem_mcp.modules.quantum_tools import _estimate_time_seconds
+from ypotheto_compchem_mcp.chemistry.qm_engine import estimate_time_seconds as _estimate_time_seconds
 
 @mcp.tool()
 @mcp_tool_decorator

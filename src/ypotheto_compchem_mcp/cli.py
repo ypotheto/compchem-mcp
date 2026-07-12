@@ -33,6 +33,14 @@ def main():
     # Ensure data directory exists
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     
+    # Initialize database tables
+    from ypotheto_compchem_mcp.database import initialize_database
+    initialize_database()
+    
+    # Start background job queue workers
+    from ypotheto_compchem_mcp.jobs import job_manager
+    job_manager.start_workers()
+    
     if args.transport == "stdio":
         # Run standard FastMCP server via STDIO
         from ypotheto_compchem_mcp.server import mcp

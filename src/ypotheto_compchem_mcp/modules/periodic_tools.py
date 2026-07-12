@@ -6,7 +6,10 @@ from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.chemistry.periodic_engine import (
     import_periodic_structure_engine,
     analyze_crystal_symmetry_engine,
-    generate_supercell_engine
+    generate_supercell_engine,
+    build_surface_slab_engine,
+    add_adsorbate_to_surface_engine,
+    run_periodic_dft_engine
 )
 
 @mcp.tool()
@@ -130,4 +133,144 @@ def generate_supercell(
             "parent_molecule_id": molecule_id,
             "supercell_molecule_id": super_id
         }
+    )
+
+
+@mcp.tool()
+@mcp_tool_decorator
+def build_surface_slab(
+    bulk_molecule_id: str,
+    miller_indices: List[int],
+    layers: int,
+    vacuum_size: float = 10.0
+) -> dict:
+    """
+    Generate a surface slab from bulk periodic crystal structure.
+    
+    Parameters:
+    - bulk_molecule_id: Workspace bulk crystal structure ID (e.g. crystal_a1b2).
+    - miller_indices: Miller indices [h, k, l] representing target surface plane (e.g. [1, 1, 1]).
+    - layers: Number of layers of crystal in the slab (integer).
+    - vacuum_size: Height of vacuum region above slab in Angstroms (default 10.0).
+    """
+    workspace_id = get_workspace_id()
+    
+    res = build_surface_slab_engine(workspace_id, bulk_molecule_id, miller_indices, layers, vacuum_size)
+    slab_id = res["results"]["slab_molecule_id"]
+    
+    cif_art = register_artifact(
+        f"{slab_id}.cif",
+        res["cif_block"].encode("utf-8"),
+        "structure",
+        f"Slab CIF coordinates of {slab_id}"
+    )
+    
+    interpretation = (
+        f"Surface slab generated successfully: {slab_id}.\n"
+        f"Miller Indices = {tuple(miller_indices)}, Layers = {layers}, Vacuum = {vacuum_size} A.\n"
+        f"Chemical Formula = {res['results']['formula']}, Atoms = {res['results']['num_atoms']}."
+    )
+    
+    return make_success_response(
+        results=res["results"],
+        interpretation=interpretation,
+        artifacts=[cif_art],
+        meta={
+            "parent_bulk_molecule_id": bulk_molecule_id,
+            "slab_molecule_id": slab_id
+        }
+    )
+
+
+@mcp.tool()
+@mcp_tool_decorator
+def add_adsorbate_to_surface(
+    slab_molecule_id: str,
+    adsorbate_molecule_id: str,
+    height: float = 1.5,
+    position_type: str = "ontop"
+) -> dict:
+    """
+    Place a non-periodic adsorbate molecule onto a periodic surface slab.
+    
+    Parameters:
+    - slab_molecule_id: Target periodic surface slab structure ID.
+    - adsorbate_molecule_id: Adsorbate molecule ID (e.g. mol_a1b2).
+    - height: Distance above surface plane in Angstroms (default 1.5).
+    - position_type: Surface site type, e.g. 'ontop', 'bridge', 'hollow', or coordinates like '0.5,0.5'.
+    """
+    workspace_id = get_workspace_id()
+    
+    res = add_adsorbate_to_surface_engine(workspace_id, slab_molecule_id, adsorbate_molecule_id, height, position_type)
+    combined_id = res["results"]["combined_molecule_id"]
+    
+    cif_art = register_artifact(
+        f"{combined_id}.cif",
+        res["cif_block"].encode("utf-8"),
+        "structure",
+        f"Adsorbed complex CIF of {combined_id}"
+    )
+    
+    interpretation = (
+        f"Adsorbate placed successfully onto surface slab: {combined_id}.\n"
+        f"Combined Formula = {res['results']['formula']}, Total Atoms = {res['results']['num_atoms']}."
+    )
+    
+    return make_success_response(
+        results=res["results"],
+        interpretation=interpretation,
+        artifacts=[cif_art],
+        meta={
+            "slab_molecule_id": slab_molecule_id,
+            "combined_molecule_id": combined_id
+        }
+    )
+
+
+@mcp.tool()
+@mcp_tool_decorator
+def run_periodic_dft(
+    molecule_id: str,
+    kpts: List[int] = [1, 1, 1],
+    method: str = "xTB",
+    run_async: bool = True
+) -> dict:
+    """
+    Perform periodic DFT or semi-empirical GFN-xTB PBC energy calculations.
+    
+    Parameters:
+    - molecule_id: Periodic crystal or slab structure ID.
+    - kpts: K-point grid dimensions, e.g. [1, 1, 1] or [2, 2, 2].
+    - method: Quantum chemical solver ('xTB' or DFT).
+    - run_async: If true, runs periodic energy evaluation in background (default is True).
+    """
+    workspace_id = get_workspace_id()
+    est_sec = 25
+    
+    from ypotheto_compchem_mcp.jobs import job_manager
+    
+    if run_async:
+        job = job_manager.submit_job(
+            workspace_id,
+            run_periodic_dft_engine,
+            est_sec,
+            workspace_id,
+            molecule_id,
+            kpts,
+            method
+        )
+        return make_success_response(
+            results={
+                "job_id": job.job_id,
+                "status": job.status,
+                "estimated_time_seconds": job.estimated_time_seconds,
+                "message": f"Submitted periodic boundary calculation. Poll status via get_job_status('{job.job_id}')."
+            },
+            interpretation=f"Periodic boundary calculation job submitted. Job ID: {job.job_id}."
+        )
+        
+    res = run_periodic_dft_engine(workspace_id, molecule_id, kpts, method)
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"]
     )

@@ -47,11 +47,17 @@ async def serve_artifact(request):
     if ".." in workspace_id or ".." in artifact_id or ".." in filename:
         return JSONResponse({"detail": "Forbidden"}, status_code=403)
         
-    filepath = settings.data_dir / "workspaces" / workspace_id / "artifacts" / artifact_id / filename
-    if not filepath.exists() or not filepath.is_file():
+    path = f"artifacts/{artifact_id}/{filename}"
+    try:
+        from ypotheto_compchem_mcp.storage import storage
+        data = storage.read_file(workspace_id, path)
+        import mimetypes
+        media_type, _ = mimetypes.guess_type(filename)
+        return Response(data, media_type=media_type)
+    except FileNotFoundError:
         return Response("Artifact not found", status_code=404)
-        
-    return FileResponse(filepath)
+    except Exception as e:
+        return Response(f"Internal storage error: {str(e)}", status_code=500)
 
 # Build ASGI routes
 routes = [

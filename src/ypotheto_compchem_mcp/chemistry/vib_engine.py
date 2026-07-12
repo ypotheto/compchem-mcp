@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from ase import Atoms
 from ase.vibrations import Vibrations

@@ -1,35 +1,10 @@
-from typing import Optional
+from typing import Optional, List
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.chemistry.qm_engine import run_single_point_engine, optimize_geometry_engine, PYSCF_AVAILABLE
-
-def _estimate_time_seconds(workspace_id: str, molecule_id: str, method: str, basis: str) -> int:
-    """Estimate execution time based on molecule size, method, and basis set."""
-    try:
-        from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
-        mol = load_molecule_from_workspace(workspace_id, molecule_id)
-        natoms = mol.GetNumAtoms()
-    except Exception:
-        natoms = 5  # Fallback
-        
-    method_upper = method.upper()
-    if method_upper in ("MMFF94", "UFF"):
-        return 2
-        
-    basis_clean = basis.lower().strip()
-    if "6-31g" in basis_clean:
-        factor = 0.4
-    elif "sto-3g" in basis_clean:
-        factor = 0.08
-    else:
-        factor = 1.2
-        
-    # DFT/HF scaling is O(N^3)
-    est = int(factor * (natoms ** 3))
-    return max(5, min(3600, est))
+from ypotheto_compchem_mcp.chemistry.qm_engine import run_single_point_engine, optimize_geometry_engine, run_pyscf_properties_engine, PYSCF_AVAILABLE, estimate_time_seconds as _estimate_time_seconds
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -71,7 +46,8 @@ def run_single_point(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    run_async: bool = False
+    run_async: bool = False,
+    solvent: Optional[str] = None
 ) -> dict:
     """
     Compute single-point energy, dipole moments, HOMO/LUMO energies, and Mulliken charges.
@@ -85,11 +61,29 @@ def run_single_point(
     - charge: Net molecular charge (default is 0)
     - spin: Spin state 2S (number of unpaired electrons, default is 0)
     - run_async: If true, runs calculation in background and returns job ID immediately.
+    - solvent: Implicit solvent model name (e.g. water, methanol, benzene)
     """
     if not PYSCF_AVAILABLE:
         raise RuntimeError("PySCF is not installed or available on this system host.")
         
     workspace_id = get_workspace_id()
+    
+    # Run preflight checks
+    from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    try:
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+    except Exception as e:
+        return make_error_response("MOLECULE_NOT_FOUND", f"Could not load molecule {molecule_id}: {str(e)}")
+        
+    ok, err = validate_charge_spin_multiplicity(mol, charge, spin + 1)
+    if not ok:
+        return make_error_response("INVALID_CHARGE_SPIN", err)
+        
+    ok, err = validate_basis_set_coverage(mol, basis)
+    if not ok:
+        return make_error_response("UNSUPPORTED_BASIS_SET", err)
+        
     est_sec = _estimate_time_seconds(workspace_id, molecule_id, method, basis)
     
     if run_async or est_sec >= 10:
@@ -104,7 +98,8 @@ def run_single_point(
             functional,
             basis,
             charge,
-            spin
+            spin,
+            solvent
         )
         results = {
             "job_id": job.job_id,
@@ -119,7 +114,7 @@ def run_single_point(
         return make_success_response(results, interpretation)
         
     # Synchronous execution
-    res = run_single_point_engine(workspace_id, molecule_id, method, functional, basis, charge, spin)
+    res = run_single_point_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, solvent)
     
     # Save report as artifact
     import json
@@ -154,7 +149,8 @@ def optimize_geometry(
     charge: int = 0,
     spin: int = 0,
     max_steps: int = 50,
-    run_async: bool = True
+    run_async: bool = True,
+    solvent: Optional[str] = None
 ) -> dict:
     """
     Relax molecule coordinates using ASE LBFGS optimizer coupled with PySCF energy/gradients.
@@ -168,11 +164,29 @@ def optimize_geometry(
     - spin: Spin state 2S (number of unpaired electrons, default is 0)
     - max_steps: Maximum LBFGS optimization steps (default 50)
     - run_async: If true, runs optimization in background (strongly recommended, default is True).
+    - solvent: Implicit solvent model name (e.g. water, methanol, benzene)
     """
     if not PYSCF_AVAILABLE:
         raise RuntimeError("PySCF is not installed or available on this system host.")
         
     workspace_id = get_workspace_id()
+    
+    # Run preflight checks
+    from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    try:
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+    except Exception as e:
+        return make_error_response("MOLECULE_NOT_FOUND", f"Could not load molecule {molecule_id}: {str(e)}")
+        
+    ok, err = validate_charge_spin_multiplicity(mol, charge, spin + 1)
+    if not ok:
+        return make_error_response("INVALID_CHARGE_SPIN", err)
+        
+    ok, err = validate_basis_set_coverage(mol, basis)
+    if not ok:
+        return make_error_response("UNSUPPORTED_BASIS_SET", err)
+        
     # Optimize takes longer: roughly multiply single point time by ~15 steps
     est_sec = _estimate_time_seconds(workspace_id, molecule_id, method, basis) * 15
     
@@ -188,7 +202,9 @@ def optimize_geometry(
             basis,
             charge,
             spin,
-            max_steps
+            max_steps,
+            None,
+            solvent
         )
         results = {
             "job_id": job.job_id,
@@ -203,7 +219,7 @@ def optimize_geometry(
         return make_success_response(results, interpretation)
         
     # Synchronous execution
-    res = optimize_geometry_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, max_steps)
+    res = optimize_geometry_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, max_steps, None, solvent)
     
     # Save optimized structures as artifacts
     xyz_bytes = res["xyz_block"].encode("utf-8")
@@ -227,6 +243,104 @@ def optimize_geometry(
         meta={
             "molecule_id": molecule_id,
             "optimized_molecule_id": opt_mol_id,
+            "method": f"{method}/{functional}/{basis}"
+        }
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def run_pyscf_properties(
+    molecule_id: str,
+    method: str = "DFT",
+    functional: str = "B3LYP",
+    basis: str = "sto-3g",
+    charge: int = 0,
+    spin: int = 0,
+    properties: List[str] = ["mulliken", "loewdin", "esp", "homo_lumo_cubes"],
+    run_async: bool = True,
+    solvent: Optional[str] = None
+) -> dict:
+    """
+    Perform advanced electronic structure calculations to compute properties like
+    Mulliken and Loewdin populations, Electrostatic Potential (ESP) cubes, and HOMO/LUMO orbital cubes.
+    
+    Parameters:
+    - molecule_id: The stored molecule handle (e.g. mol_a1b2c3d4)
+    - method: Method type ('DFT' or 'HF')
+    - functional: XC functional (only used for DFT, e.g. B3LYP, PBE)
+    - basis: Orbital basis set (e.g. sto-3g, 6-31g*)
+    - charge: Net molecular charge (default is 0)
+    - spin: Spin state 2S (number of unpaired electrons, default is 0)
+    - properties: List of properties to compute ('mulliken', 'loewdin', 'esp', 'homo_lumo_cubes')
+    - run_async: If true, runs calculation in background and returns job ID.
+    - solvent: Implicit solvent model name (e.g. water, methanol, benzene)
+    """
+    if not PYSCF_AVAILABLE:
+        raise RuntimeError("PySCF is not installed or available on this system host.")
+        
+    workspace_id = get_workspace_id()
+    
+    # Run preflight checks
+    from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    try:
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+    except Exception as e:
+        return make_error_response("MOLECULE_NOT_FOUND", f"Could not load molecule {molecule_id}: {str(e)}")
+        
+    ok, err = validate_charge_spin_multiplicity(mol, charge, spin + 1)
+    if not ok:
+        return make_error_response("INVALID_CHARGE_SPIN", err)
+        
+    ok, err = validate_basis_set_coverage(mol, basis)
+    if not ok:
+        return make_error_response("UNSUPPORTED_BASIS_SET", err)
+        
+    est_sec = _estimate_time_seconds(workspace_id, molecule_id, method, basis)
+    if "homo_lumo_cubes" in properties or "esp" in properties:
+        est_sec += 5
+        
+    if run_async or est_sec >= 10:
+        job = job_manager.submit_job(
+            workspace_id,
+            run_pyscf_properties_engine,
+            est_sec,
+            workspace_id,
+            molecule_id,
+            method,
+            functional,
+            basis,
+            charge,
+            spin,
+            properties,
+            solvent
+        )
+        results = {
+            "job_id": job.job_id,
+            "status": job.status,
+            "estimated_time_seconds": job.estimated_time_seconds,
+            "message": f"Submitted advanced properties calculation. Poll status via get_job_status('{job.job_id}')."
+        }
+        interpretation = (
+            f"The advanced properties calculation is estimated to take {est_sec} seconds and has been submitted. "
+            f"Job ID: {job.job_id}. Check back shortly."
+        )
+        return make_success_response(results, interpretation)
+        
+    res = run_pyscf_properties_engine(
+        workspace_id, molecule_id, method, functional, basis, charge, spin, properties, solvent
+    )
+    
+    if not res["ok"]:
+        return make_error_response(res["error"]["code"], res["error"]["message"])
+        
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"],
+        warnings=res.get("warnings", []),
+        artifacts=res["results"].get("artifacts", []),
+        meta={
+            "molecule_id": molecule_id,
             "method": f"{method}/{functional}/{basis}"
         }
     )

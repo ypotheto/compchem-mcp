@@ -21,39 +21,137 @@ def _get_index_file(workspace_id: str) -> Path:
     return _get_molecules_dir(workspace_id) / "index.json"
 
 def _load_index(workspace_id: str) -> Dict[str, Any]:
-    """Load the molecule index from disk."""
-    index_file = _get_index_file(workspace_id)
-    if not index_file.exists():
-        return {}
+    """Load the molecule index from storage, falling back to database if configured."""
+    from ypotheto_compchem_mcp.database import get_connection
+    from ypotheto_compchem_mcp.storage import storage
+    import logging
+    
+    conn = get_connection()
+    if conn is not None:
+        index = {}
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT molecule_id, name, formula, smiles, num_atoms, method, metadata FROM compchem.molecules WHERE workspace_id = %s;",
+                (workspace_id,)
+            )
+            for row in cur.fetchall():
+                molecule_id, name, formula, smiles, num_atoms, method, metadata = row
+                index[molecule_id] = {
+                    "molecule_id": molecule_id,
+                    "name": name,
+                    "formula": formula,
+                    "smiles": smiles,
+                    "num_atoms": num_atoms,
+                    "method": method,
+                    **(metadata or {})
+                }
+            cur.close()
+            conn.close()
+            # Also keep local file cache synced in case local tools look at index.json
+            index_file = _get_index_file(workspace_id)
+            index_file.write_text(json.dumps(index, indent=2), encoding="utf-8")
+            return index
+        except Exception as e:
+            logging.error(f"Failed to load index from PostgreSQL: {str(e)}", exc_info=True)
+            
+    # Fallback to local files / Spaces
     try:
-        return json.loads(index_file.read_text(encoding="utf-8"))
-    except Exception:
+        data = storage.read_file(workspace_id, "molecules/index.json")
+        index = json.loads(data.decode("utf-8"))
+        # Cache local copy
+        index_file = _get_index_file(workspace_id)
+        index_file.write_text(json.dumps(index, indent=2), encoding="utf-8")
+        return index
+    except FileNotFoundError:
+        index_file = _get_index_file(workspace_id)
+        if index_file.exists():
+            try:
+                index = json.loads(index_file.read_text(encoding="utf-8"))
+                storage.write_file(workspace_id, "molecules/index.json", json.dumps(index).encode("utf-8"))
+                return index
+            except Exception:
+                pass
         return {}
 
 def _save_index(workspace_id: str, index: Dict[str, Any]):
-    """Save the molecule index to disk."""
+    """Save the molecule index to disk and storage."""
+    from ypotheto_compchem_mcp.storage import storage
     index_file = _get_index_file(workspace_id)
-    index_file.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    index_text = json.dumps(index, indent=2)
+    index_file.write_text(index_text, encoding="utf-8")
+    storage.write_file(workspace_id, "molecules/index.json", index_text.encode("utf-8"))
 
 def save_molecule_coords(workspace_id: str, molecule_id: str, sdf_block: str, xyz_block: str, meta: Dict[str, Any]):
     """Helper to save molecule coordinates and update the index."""
+    from ypotheto_compchem_mcp.storage import storage
+    from ypotheto_compchem_mcp.database import get_connection
+    import logging
     mol_dir = _get_molecules_dir(workspace_id)
     
-    # Save SDF and XYZ files
+    # Save SDF and XYZ files locally
     (mol_dir / f"{molecule_id}.sdf").write_text(sdf_block, encoding="utf-8")
     (mol_dir / f"{molecule_id}.xyz").write_text(xyz_block, encoding="utf-8")
     
+    # Upload to storage
+    storage.write_file(workspace_id, f"molecules/{molecule_id}.sdf", sdf_block.encode("utf-8"))
+    storage.write_file(workspace_id, f"molecules/{molecule_id}.xyz", xyz_block.encode("utf-8"))
+    
+    # Save to PostgreSQL
+    conn = get_connection()
+    if conn is not None:
+        cur = None
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO compchem.molecules (molecule_id, workspace_id, name, formula, smiles, num_atoms, method, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (molecule_id) DO UPDATE 
+                SET name = EXCLUDED.name, formula = EXCLUDED.formula, smiles = EXCLUDED.smiles, 
+                    num_atoms = EXCLUDED.num_atoms, method = EXCLUDED.method, metadata = EXCLUDED.metadata;
+                """,
+                (
+                    molecule_id,
+                    workspace_id,
+                    meta.get("name", ""),
+                    meta.get("formula", ""),
+                    meta.get("smiles", ""),
+                    meta.get("num_atoms", 0),
+                    meta.get("method", ""),
+                    json.dumps({k: v for k, v in meta.items() if k not in ["molecule_id", "workspace_id", "name", "formula", "smiles", "num_atoms", "method"]})
+                )
+            )
+            conn.commit()
+        except Exception as e:
+            logging.error(f"Failed to save molecule to PostgreSQL: {str(e)}", exc_info=True)
+        finally:
+            if cur is not None:
+                try:
+                    cur.close()
+                except Exception:
+                    pass
+            try:
+                conn.close()
+            except Exception:
+                pass
+            
     # Update index
     index = _load_index(workspace_id)
     index[molecule_id] = meta
     _save_index(workspace_id, index)
 
 def get_molecule_path(workspace_id: str, molecule_id: str, fmt: str = "sdf") -> Path:
-    """Get the file path of a saved molecule."""
+    """Get the file path of a saved molecule, syncing from storage if needed."""
+    from ypotheto_compchem_mcp.storage import storage
     mol_dir = _get_molecules_dir(workspace_id)
     filepath = mol_dir / f"{molecule_id}.{fmt}"
     if not filepath.exists():
-        raise FileNotFoundError(f"Molecule {molecule_id} coordinates not found in workspace.")
+        try:
+            data = storage.read_file(workspace_id, f"molecules/{molecule_id}.{fmt}")
+            filepath.write_bytes(data)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Molecule {molecule_id} coordinates not found in workspace or storage.")
     return filepath
 
 def load_molecule_from_workspace(workspace_id: str, molecule_id: str) -> Chem.Mol:

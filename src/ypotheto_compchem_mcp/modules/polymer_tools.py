@@ -1,11 +1,15 @@
-from typing import Optional
+from typing import Optional, List
+import os
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
 from ypotheto_compchem_mcp.artifacts import register_artifact
-from ypotheto_compchem_mcp.workspace import get_workspace_id
+from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 from ypotheto_compchem_mcp.chemistry.polymer_engine import (
     register_monomer_engine,
-    build_polymer_chain_engine
+    build_polymer_chain_engine,
+    pack_amorphous_cell_engine,
+    run_lammps_simulation_engine,
+    analyze_md_trajectory_engine
 )
 
 @mcp.tool()
@@ -94,4 +98,165 @@ def build_polymer_chain(
             "monomer_id": monomer_id,
             "dp": dp
         }
+    )
+
+
+@mcp.tool()
+@mcp_tool_decorator
+def pack_amorphous_cell(
+    molecule_ids: List[str],
+    counts: List[int],
+    density_g_cm3: float = 0.9,
+    box_size_angstrom: Optional[float] = None,
+    run_async: bool = True
+) -> dict:
+    """
+    Pack polymer chains and solvent molecules into a periodic box using Packmol.
+    
+    Parameters:
+    - molecule_ids: List of workspace molecule IDs (e.g. ['mol_a1b2', 'mol_c3d4'])
+    - counts: Number of copies of each molecule to pack (e.g. [5, 100])
+    - density_g_cm3: Target density of packed cell in g/cm3 (default is 0.9)
+    - box_size_angstrom: Optional box size side length. Estimated if not provided.
+    - run_async: If true, runs packing in background (recommended, default is True).
+    """
+    workspace_id = get_workspace_id()
+    est_sec = 10
+    
+    # Lazy import to avoid circular dependency
+    from ypotheto_compchem_mcp.jobs import job_manager
+    
+    if run_async:
+        job = job_manager.submit_job(
+            workspace_id,
+            pack_amorphous_cell_engine,
+            est_sec,
+            workspace_id,
+            molecule_ids,
+            counts,
+            density_g_cm3,
+            box_size_angstrom
+        )
+        return make_success_response(
+            results={
+                "job_id": job.job_id,
+                "status": job.status,
+                "estimated_time_seconds": job.estimated_time_seconds,
+                "message": f"Submitted amorphous packing job. Poll status via get_job_status('{job.job_id}')."
+            },
+            interpretation=f"Amorphous cell packing job submitted. Job ID: {job.job_id}."
+        )
+        
+    res = pack_amorphous_cell_engine(workspace_id, molecule_ids, counts, density_g_cm3, box_size_angstrom)
+    
+    interpretation = (
+        f"Amorphous cell packed successfully: {res['packed_molecule_id']} ({res['name']}).\n"
+        f"Box Size = {res['box_size_angstrom']:.2f} A, Target Density = {res['density_g_cm3']:.2f} g/cm3, Total Atoms = {res['num_atoms']}."
+    )
+    return make_success_response(
+        results=res,
+        interpretation=interpretation,
+        meta={"packed_molecule_id": res["packed_molecule_id"]}
+    )
+
+
+@mcp.tool()
+@mcp_tool_decorator
+def run_lammps_simulation(
+    packed_molecule_id: str,
+    steps: int = 1000,
+    timestep_fs: float = 1.0,
+    temperature_k: float = 300.0,
+    pressure_atm: float = 1.0,
+    ensemble: str = "npt",
+    run_async: bool = True
+) -> dict:
+    """
+    Run classical MD simulation in LAMMPS (or ASE fallback).
+    
+    Parameters:
+    - packed_molecule_id: Workspace ID of the packed amorphous cell.
+    - steps: Total MD integration steps (default 1000).
+    - timestep_fs: Integration timestep in femtoseconds (default 1.0).
+    - temperature_k: Target temperature in Kelvin (default 300.0).
+    - pressure_atm: Target pressure in atmospheres (only for NPT, default 1.0).
+    - ensemble: Thermodynamic ensemble ('npt', 'nvt', or 'nve').
+    - run_async: If true, runs MD in background (default is True).
+    """
+    workspace_id = get_workspace_id()
+    est_sec = 20
+    
+    from ypotheto_compchem_mcp.jobs import job_manager
+    
+    if run_async:
+        job = job_manager.submit_job(
+            workspace_id,
+            run_lammps_simulation_engine,
+            est_sec,
+            workspace_id,
+            packed_molecule_id,
+            steps,
+            timestep_fs,
+            temperature_k,
+            pressure_atm,
+            ensemble
+        )
+        return make_success_response(
+            results={
+                "job_id": job.job_id,
+                "status": job.status,
+                "estimated_time_seconds": job.estimated_time_seconds,
+                "message": f"Submitted MD simulation. Poll status via get_job_status('{job.job_id}')."
+            },
+            interpretation=f"MD simulation job submitted. Job ID: {job.job_id}."
+        )
+        
+    res = run_lammps_simulation_engine(workspace_id, packed_molecule_id, steps, timestep_fs, temperature_k, pressure_atm, ensemble)
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"],
+        artifacts=res.get("artifacts", []),
+        meta={"packed_molecule_id": packed_molecule_id}
+    )
+
+
+@mcp.tool()
+@mcp_tool_decorator
+def analyze_md_trajectory(
+    trajectory_file_id: str
+) -> dict:
+    """
+    Analyze MD trajectory XYZ file to compute Radius of Gyration, RDF, and MSD.
+    
+    Parameters:
+    - trajectory_file_id: Trajectory artifact or file name in workspace.
+    """
+    workspace_id = get_workspace_id()
+    
+    import urllib.parse
+    filename = trajectory_file_id
+    artifact_id = None
+    if "://" in filename or "/artifacts/" in filename:
+        parsed_path = urllib.parse.urlparse(filename).path
+        parts = [p for p in parsed_path.split("/") if p]
+        if len(parts) >= 4:
+            artifact_id = parts[-2]
+            filename = parts[-1]
+            
+    if artifact_id:
+        file_path = workspace_manager.get_artifacts_dir(workspace_id) / artifact_id / filename
+    else:
+        file_path = workspace_manager.get_workspace_dir(workspace_id) / filename
+        if not file_path.exists():
+            file_path = workspace_manager.get_artifacts_dir(workspace_id) / filename
+            
+    if not file_path.exists():
+        raise FileNotFoundError(f"Trajectory file {trajectory_file_id} not found.")
+            
+    traj_xyz = file_path.read_text(encoding="utf-8")
+    
+    res = analyze_md_trajectory_engine(workspace_id, traj_xyz)
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"]
     )

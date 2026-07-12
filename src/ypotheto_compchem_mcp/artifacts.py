@@ -17,13 +17,17 @@ def register_artifact(
     workspace_id = get_workspace_id()
     artifact_id = uuid.uuid4().hex[:8]
     
-    # Workspace artifacts location: workspaces/{workspace_id}/artifacts/{artifact_id}/{filename}
+    # Save to local workspace cache directory
     artifacts_dir = workspace_manager.get_artifacts_dir(workspace_id)
     target_dir = artifacts_dir / artifact_id
     target_dir.mkdir(parents=True, exist_ok=True)
-    
     target_file = target_dir / filename
     target_file.write_bytes(data)
+    
+    # Save to global persistent storage backend
+    from ypotheto_compchem_mcp.storage import storage
+    path = f"artifacts/{artifact_id}/{filename}"
+    storage.write_file(workspace_id, path, data)
     
     # Public URL construction: {public_base_url}/artifacts/{workspace_id}/{artifact_id}/{filename}
     url = f"{settings.public_base_url}/artifacts/{workspace_id}/{artifact_id}/{filename}"

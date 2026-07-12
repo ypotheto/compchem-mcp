@@ -35,10 +35,26 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # --- Final lightweight runtime image ---
 FROM python:3.12-slim-bookworm AS runner
 
-# Install runtime dependencies (OpenBLAS is needed for PySCF compiled binaries)
+# Install runtime dependencies (OpenBLAS is needed for PySCF compiled binaries, and curl/ca-certificates/xz-utils for crest, julia for clapeyron, packmol and lammps for polymers)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libopenblas-dev \
+    xtb \
+    curl \
+    ca-certificates \
+    xz-utils \
+    julia \
+    packmol \
+    lammps \
     && rm -rf /var/lib/apt/lists/*
+
+# Download and install CREST binary
+RUN curl -fsSL -o /tmp/crest.tar.xz https://github.com/crest-lab/crest/releases/download/v3.0.2/crest-gnu-v3.0.2-x86_64.tar.xz && \
+    tar -C /usr/local/bin -xf /tmp/crest.tar.xz && \
+    chmod +x /usr/local/bin/crest && \
+    rm /tmp/crest.tar.xz
+
+# Pre-install Clapeyron Julia library for fast container initialization
+RUN julia -e 'import Pkg; Pkg.add("Clapeyron")'
 
 # Set working directory
 WORKDIR /app

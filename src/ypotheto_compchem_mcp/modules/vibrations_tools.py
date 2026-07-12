@@ -1,11 +1,11 @@
 import json
 from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
+from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.vib_engine import run_vibrations_engine, simulate_ir_spectrum_engine
-from ypotheto_compchem_mcp.modules.quantum_tools import _estimate_time_seconds
+from ypotheto_compchem_mcp.chemistry.qm_engine import estimate_time_seconds as _estimate_time_seconds
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -31,6 +31,23 @@ def calculate_vibrations(
     - run_async: If true, runs in the background (default is True).
     """
     workspace_id = get_workspace_id()
+    
+    # Run preflight checks
+    from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    try:
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+    except Exception as e:
+        return make_error_response("MOLECULE_NOT_FOUND", f"Could not load molecule {molecule_id}: {str(e)}")
+        
+    ok, err = validate_charge_spin_multiplicity(mol, charge, spin + 1)
+    if not ok:
+        return make_error_response("INVALID_CHARGE_SPIN", err)
+        
+    ok, err = validate_basis_set_coverage(mol, basis)
+    if not ok:
+        return make_error_response("UNSUPPORTED_BASIS_SET", err)
+        
     # Vibrations take roughly 6 * single point times
     est_sec = _estimate_time_seconds(workspace_id, molecule_id, method, basis) * 6
     
@@ -105,6 +122,23 @@ def simulate_ir_spectrum(
     - run_async: If true, runs in the background (default is True).
     """
     workspace_id = get_workspace_id()
+    
+    # Run preflight checks
+    from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    try:
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+    except Exception as e:
+        return make_error_response("MOLECULE_NOT_FOUND", f"Could not load molecule {molecule_id}: {str(e)}")
+        
+    ok, err = validate_charge_spin_multiplicity(mol, charge, spin + 1)
+    if not ok:
+        return make_error_response("INVALID_CHARGE_SPIN", err)
+        
+    ok, err = validate_basis_set_coverage(mol, basis)
+    if not ok:
+        return make_error_response("UNSUPPORTED_BASIS_SET", err)
+        
     est_sec = _estimate_time_seconds(workspace_id, molecule_id, method, basis) * 6
     
     if run_async or est_sec >= 10:

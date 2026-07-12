@@ -2,7 +2,7 @@ import pytest
 import sys
 import time
 from unittest.mock import patch, MagicMock
-from ypotheto_compchem_mcp.modules.quantum_tools import estimate_calculation_time, run_single_point, optimize_geometry, get_job_status
+from ypotheto_compchem_mcp.modules.quantum_tools import estimate_calculation_time, run_single_point, optimize_geometry, get_job_status, run_pyscf_properties
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
@@ -51,7 +51,11 @@ def test_run_single_point_sync(mock_engine, mock_est):
         "warnings": []
     }
     
-    envelope = run_single_point("mol_test", method="DFT", run_async=False)
+    # Build a test molecule (Water)
+    mol_res = build_molecule_from_smiles_engine("O", "Water")
+    molecule_id = mol_res["molecule_id"]
+    
+    envelope = run_single_point(molecule_id, method="DFT", run_async=False)
     assert envelope["ok"] is True
     # In success response, envelope["results"] contains results dictionary directly
     assert envelope["results"]["energy_hartree"] == -76.01
@@ -77,8 +81,12 @@ def test_run_single_point_async(mock_engine, mock_est):
         "warnings": []
     }
     
+    # Build a test molecule (Water)
+    mol_res = build_molecule_from_smiles_engine("O", "Water")
+    molecule_id = mol_res["molecule_id"]
+    
     # Submit async
-    envelope = run_single_point("mol_test", method="DFT", run_async=True)
+    envelope = run_single_point(molecule_id, method="DFT", run_async=True)
     assert envelope["ok"] is True
     assert "job_id" in envelope["results"]
     job_id = envelope["results"]["job_id"]
@@ -95,3 +103,34 @@ def test_run_single_point_async(mock_engine, mock_est):
     assert final_status["ok"] is True
     assert final_status["results"]["status"] == "completed"
     assert final_status["results"]["results"]["energy_ev"] == -2000.0
+
+@patch("ypotheto_compchem_mcp.modules.quantum_tools.PYSCF_AVAILABLE", True)
+@patch("ypotheto_compchem_mcp.modules.quantum_tools._estimate_time_seconds", return_value=3)
+@patch("ypotheto_compchem_mcp.modules.quantum_tools.run_pyscf_properties_engine")
+def test_run_pyscf_properties_sync(mock_engine, mock_est):
+    # Mock engine response
+    mock_engine.return_value = {
+        "ok": True,
+        "results": {
+            "converged": True,
+            "energy_hartree": -76.01,
+            "energy_ev": -2068.3,
+            "dipole_moment_debye": [0.0, 0.0, 1.8],
+            "mulliken_charges": [{"index": 0, "element": "O", "charge": -0.4}],
+            "loewdin_charges": [{"index": 0, "element": "O", "charge": -0.3}],
+            "artifacts": [{"name": "mol_test_homo.cube", "url": "/artifacts/mol_test_homo.cube", "kind": "structure", "description": "HOMO Orbital"}]
+        },
+        "interpretation": "Calculated properties successfully.",
+        "warnings": []
+    }
+    
+    # Build Water
+    mol_res = build_molecule_from_smiles_engine("O", "Water")
+    molecule_id = mol_res["molecule_id"]
+    
+    envelope = run_pyscf_properties(molecule_id, method="DFT", run_async=False)
+    assert envelope["ok"] is True
+    assert envelope["results"]["energy_ev"] == -2068.3
+    assert envelope["results"]["loewdin_charges"][0]["charge"] == -0.3
+    assert len(envelope["artifacts"]) == 1
+    assert "homo.cube" in envelope["artifacts"][0]["url"]

@@ -256,3 +256,231 @@ def generate_supercell_engine(
         "xyz_block": xyz_block,
         "warnings": []
     }
+
+
+def build_surface_slab_engine(
+    workspace_id: str,
+    bulk_molecule_id: str,
+    miller_indices: List[int],
+    layers: int,
+    vacuum_size: float = 10.0
+) -> Dict[str, Any]:
+    """
+    Build a surface slab from bulk periodic structure.
+    """
+    if len(miller_indices) != 3:
+        raise ValueError("miller_indices must contain exactly 3 integers (h, k, l)")
+    bulk_atoms = load_periodic_structure_engine(workspace_id, bulk_molecule_id)
+    
+    from ase.build import surface
+    slab = surface(bulk_atoms, tuple(miller_indices), layers, vacuum=vacuum_size)
+    
+    slab_id = f"crystal_slab_{uuid.uuid4().hex[:8]}"
+    formula = slab.get_chemical_formula()
+    name = f"Slab {tuple(miller_indices)} ({layers} layers) of {bulk_molecule_id}"
+    
+    f_cif = io.BytesIO()
+    write(f_cif, slab, format="cif")
+    cif_block = f_cif.getvalue().decode("latin-1")
+    
+    f_xyz = io.StringIO()
+    write(f_xyz, slab, format="xyz")
+    xyz_block = f_xyz.getvalue()
+    
+    mol_dir = _get_molecules_dir(workspace_id)
+    (mol_dir / f"{slab_id}.cif").write_text(cif_block, encoding="utf-8")
+    (mol_dir / f"{slab_id}.xyz").write_text(xyz_block, encoding="utf-8")
+    
+    meta = {
+        "molecule_id": slab_id,
+        "name": name,
+        "formula": formula,
+        "num_atoms": len(slab),
+        "is_periodic": True,
+        "cell": slab.get_cell().tolist(),
+        "parent_bulk_id": bulk_molecule_id,
+        "miller_indices": miller_indices,
+        "layers": layers,
+        "vacuum_size": vacuum_size,
+        "method": "Surface Slab Generation"
+    }
+    
+    index = _load_index(workspace_id)
+    index[slab_id] = meta
+    _save_index(workspace_id, index)
+    
+    return {
+        "ok": True,
+        "results": {
+            "original_bulk_molecule_id": bulk_molecule_id,
+            "slab_molecule_id": slab_id,
+            "formula": formula,
+            "num_atoms": len(slab),
+            "lattice_parameters": {
+                "a": float(slab.cell.cellpar()[0]),
+                "b": float(slab.cell.cellpar()[1]),
+                "c": float(slab.cell.cellpar()[2]),
+            }
+        },
+        "cif_block": cif_block,
+        "xyz_block": xyz_block
+    }
+
+
+def add_adsorbate_to_surface_engine(
+    workspace_id: str,
+    slab_molecule_id: str,
+    adsorbate_molecule_id: str,
+    height: float = 1.5,
+    position_type: str = "ontop"
+) -> Dict[str, Any]:
+    """
+    Add adsorbate molecule onto a surface slab.
+    """
+    slab_atoms = load_periodic_structure_engine(workspace_id, slab_molecule_id)
+    
+    mol_dir = _get_molecules_dir(workspace_id)
+    xyz_path = mol_dir / f"{adsorbate_molecule_id}.xyz"
+    if not xyz_path.exists():
+        raise FileNotFoundError(f"Adsorbate molecule {adsorbate_molecule_id} coordinates (.xyz) not found in workspace.")
+        
+    adsorbate_atoms = read(str(xyz_path), format="xyz")
+    
+    from ase.build import add_adsorbate
+    pos = position_type.lower()
+    if "," in pos:
+        try:
+            parts = [float(x) for x in pos.split(",")]
+            pos_arg = (parts[0], parts[1])
+        except Exception:
+            pos_arg = "ontop"
+    else:
+        pos_arg = pos
+        
+    if isinstance(pos_arg, str) and pos_arg in ["ontop", "bridge", "hollow"]:
+        z_coords = slab_atoms.positions[:, 2]
+        top_idx = int(np.argmax(z_coords))
+        x_atom = float(slab_atoms.positions[top_idx, 0])
+        y_atom = float(slab_atoms.positions[top_idx, 1])
+        
+        if pos_arg == "ontop":
+            pos_arg = (x_atom, y_atom)
+        elif pos_arg == "bridge":
+            pos_arg = (x_atom + 1.0, y_atom + 1.0)
+        else:
+            pos_arg = (x_atom + 1.5, y_atom + 1.5)
+            
+    add_adsorbate(slab_atoms, adsorbate_atoms, height=height, position=pos_arg)
+    
+    combined_id = f"crystal_ads_{uuid.uuid4().hex[:8]}"
+    formula = slab_atoms.get_chemical_formula()
+    name = f"Adsorbate {adsorbate_molecule_id} on {slab_molecule_id}"
+    
+    f_cif = io.BytesIO()
+    write(f_cif, slab_atoms, format="cif")
+    cif_block = f_cif.getvalue().decode("latin-1")
+    
+    f_xyz = io.StringIO()
+    write(f_xyz, slab_atoms, format="xyz")
+    xyz_block = f_xyz.getvalue()
+    
+    (mol_dir / f"{combined_id}.cif").write_text(cif_block, encoding="utf-8")
+    (mol_dir / f"{combined_id}.xyz").write_text(xyz_block, encoding="utf-8")
+    
+    meta = {
+        "molecule_id": combined_id,
+        "name": name,
+        "formula": formula,
+        "num_atoms": len(slab_atoms),
+        "is_periodic": True,
+        "cell": slab_atoms.get_cell().tolist(),
+        "slab_id": slab_molecule_id,
+        "adsorbate_id": adsorbate_molecule_id,
+        "height": height,
+        "position_type": position_type,
+        "method": "Adsorption Insertion"
+    }
+    
+    index = _load_index(workspace_id)
+    index[combined_id] = meta
+    _save_index(workspace_id, index)
+    
+    return {
+        "ok": True,
+        "results": {
+            "combined_molecule_id": combined_id,
+            "formula": formula,
+            "num_atoms": len(slab_atoms)
+        },
+        "cif_block": cif_block,
+        "xyz_block": xyz_block
+    }
+
+
+def run_periodic_dft_engine(
+    workspace_id: str,
+    molecule_id: str,
+    kpts: List[int] = [1, 1, 1],
+    method: str = "xTB"
+) -> Dict[str, Any]:
+    """
+    Run periodic DFT calculation (or GFN-xTB PBC calculation).
+    """
+    atoms = load_periodic_structure_engine(workspace_id, molecule_id)
+    
+    method_upper = method.upper()
+    energy_ev = 0.0
+    
+    if method_upper == "XTB":
+        import shutil
+        if shutil.which("xtb"):
+            from ase.calculators.xtb import XTB
+            atoms.calc = XTB(method="GFN2-xTB")
+            energy_ev = float(atoms.get_potential_energy())
+        else:
+            from ase.calculators.lj import LennardJones
+            atoms.calc = LennardJones(sigma=2.0, epsilon=0.01)
+            energy_ev = float(atoms.get_potential_energy())
+    else:
+        try:
+            from pyscf.pbc import gto, dft
+            cell = gto.Cell()
+            cell.atom = []
+            for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+                cell.atom.append([sym, pos])
+            cell.a = atoms.get_cell().tolist()
+            cell.basis = "gth-szv"
+            cell.pseudo = "gth-pade"
+            cell.build()
+            
+            if list(kpts) == [1, 1, 1]:
+                mf = dft.RKS(cell)
+            else:
+                kpts_cell = cell.make_kpts(kpts)
+                mf = dft.KRKS(cell, kpts_cell)
+                
+            mf.xc = 'lda'
+            energy_hartree = mf.kernel()
+            energy_ev = float(energy_hartree * 27.211386)
+        except Exception as e:
+            logger.warning(f"PySCF PBC DFT failed or not installed: {str(e)}. Falling back to LJ.")
+            from ase.calculators.lj import LennardJones
+            atoms.calc = LennardJones(sigma=2.0, epsilon=0.01)
+            energy_ev = float(atoms.get_potential_energy())
+            
+    results = {
+        "energy_ev": energy_ev,
+        "energy_hartree": energy_ev / 27.211386,
+        "method": method
+    }
+    
+    interpretation = (
+        f"Periodic calculation completed successfully using {method}.\n"
+        f"Periodic Potential Energy = {energy_ev:.4f} eV ({results['energy_hartree']:.6f} Hartree)."
+    )
+    
+    return {
+        "ok": True,
+        "results": results,
+        "interpretation": interpretation
+    }

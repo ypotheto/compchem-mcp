@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ypotheto-compchem-mcp"
-version = "0.4.0"
+version = "0.5.0"
 description = "Ypotheto Computational Chemistry MCP Server providing natural language access to DFT, semi-empirical, and cheminformatics tools."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,6 +32,16 @@ dependencies = [
     "pyarrow>=15.0.0",
     "pyscf>=2.5.0",
     "spglib>=2.3.0",
+    "cclib>=1.8.0",
+    "psycopg2-binary>=2.9.0",
+    "boto3>=1.34.0",
+    "cantera>=3.0.0",
+    "pyclapeyron>=0.1.0",
+    "MDAnalysis>=2.7.0",
+    "sella>=2.3.0",
+    "geometric>=1.0.0",
+    "chgnet>=0.3.0",
+    "mace-torch>=0.3.0",
 ]
 
 [project.scripts]

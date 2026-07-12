@@ -1,4 +1,7 @@
+import os
 import sys
+import json
+import uuid
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -9,14 +12,9 @@ from ase.calculators.calculator import Calculator, all_changes
 from ase.optimize import BFGS, LBFGS
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace, save_molecule_coords
-
-# Check if PySCF is installed
-try:
-    import pyscf
-    from pyscf import gto, scf, grad
-    PYSCF_AVAILABLE = True
-except ImportError:
-    PYSCF_AVAILABLE = False
+from ypotheto_compchem_mcp.workspace import workspace_manager, get_workspace_id
+from ypotheto_compchem_mcp.chemistry.runner import get_engine_runner, DockerContainerRunner
+from ypotheto_compchem_mcp.chemistry.parser import parse_qm_log_with_cclib
 
 # Hartree to eV conversion factor
 HARTREE_TO_EV = 27.211386245988
@@ -25,20 +23,35 @@ BOHR_TO_ANGSTROM = 0.529177210903
 # Hartree/Bohr to eV/Angstrom force factor: -27.211386245988 / 0.529177210903 = -51.4220674683
 FORCE_CONVERSION = -HARTREE_TO_EV / BOHR_TO_ANGSTROM
 
+# Determine PySCF availability: either local package import or docker execution runner
+try:
+    import pyscf
+    LOCAL_PYSCF_AVAILABLE = True
+except ImportError:
+    LOCAL_PYSCF_AVAILABLE = False
+
+PYSCF_AVAILABLE = LOCAL_PYSCF_AVAILABLE or (os.getenv("COMPCHEM_ENGINE_RUNNER_TYPE", "").lower() == "docker")
+
+def get_pyscf_driver_code() -> str:
+    """Helper to read pyscf_driver.py code from the same directory."""
+    driver_path = Path(__file__).parent / "pyscf_driver.py"
+    return driver_path.read_text(encoding="utf-8")
+
 class PySCFCalculator(Calculator):
     """
-    ASE Calculator wrapping PySCF for energy and force evaluations.
-    Allows coupling PySCF with ASE's geometry optimizers and MD runners.
+    ASE Calculator wrapping isolated PySCF runs for energy and force evaluations.
+    Calculations are run in isolated subprocesses/containers to prevent pollution.
     """
     implemented_properties = ['energy', 'forces', 'dipole']
     
-    def __init__(self, method: str = "DFT", functional: str = "B3LYP", basis: str = "sto-3g", charge: int = 0, spin: int = 0, **kwargs):
+    def __init__(self, method: str = "DFT", functional: str = "B3LYP", basis: str = "sto-3g", charge: int = 0, spin: int = 0, solvent: Optional[str] = None, **kwargs):
         Calculator.__init__(self, **kwargs)
         self.method = method.upper()
         self.functional = functional
         self.basis = basis
         self.charge = charge
         self.spin = spin
+        self.solvent = solvent
         
     def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
         if not PYSCF_AVAILABLE:
@@ -46,52 +59,67 @@ class PySCFCalculator(Calculator):
             
         Calculator.calculate(self, atoms, properties, system_changes)
         
-        # 1. Convert ASE atoms to PySCF atom coordinate format
+        # 1. Convert ASE atoms to XYZ block format
         atom_list = []
         for sym, pos in zip(self.atoms.get_chemical_symbols(), self.atoms.get_positions()):
             atom_list.append(f"{sym} {pos[0]} {pos[1]} {pos[2]}")
-        atom_str = "; ".join(atom_list)
+        xyz_content = f"{len(self.atoms)}\n\n" + "\n".join(atom_list)
         
-        # 2. Build PySCF Molecule
-        mol_pyscf = gto.M(
-            atom=atom_str,
-            basis=self.basis,
-            charge=self.charge,
-            spin=self.spin,
-            verbose=0
-        )
+        # 2. Get active workspace environment
+        workspace_id = get_workspace_id()
+        workspace_dir = workspace_manager.get_workspace_dir(workspace_id)
         
-        # 3. Setup SCF calculations
-        if self.method == "HF":
-            if self.spin == 0:
-                mf = scf.RHF(mol_pyscf)
-            else:
-                mf = scf.UHF(mol_pyscf)
+        job_id = f"job_calc_{uuid.uuid4().hex[:8]}"
+        
+        config = {
+            "xyz_path": "atoms.xyz",
+            "method": self.method,
+            "functional": self.functional,
+            "basis": self.basis,
+            "charge": self.charge,
+            "spin": self.spin,
+            "solvent": self.solvent,
+            "calculate_forces": "forces" in properties
+        }
+        
+        input_files = {
+            "atoms.xyz": xyz_content,
+            "config.json": json.dumps(config, indent=2),
+            "pyscf_driver.py": get_pyscf_driver_code()
+        }
+        
+        # 3. Choose runner and run
+        runner = get_engine_runner()
+        if isinstance(runner, DockerContainerRunner):
+            cmd = ["python", "pyscf_driver.py", "config.json"]
         else:
-            if self.spin == 0:
-                mf = scf.RKS(mol_pyscf)
-            else:
-                mf = scf.UKS(mol_pyscf)
-            mf.xc = self.functional
+            cmd = [sys.executable, "pyscf_driver.py", "config.json"]
             
-        # 4. Calculate energy
-        energy_hartree = mf.kernel()
-        self.results['energy'] = energy_hartree * HARTREE_TO_EV
+        run_res = runner.run_command(workspace_dir, job_id, cmd, input_files)
         
-        # 5. Calculate forces
-        if 'forces' in properties:
-            grad_obj = mf.nuc_grad_method()
-            g = grad_obj.kernel()
-            # Force F = -dE/dx (converted from Hartree/Bohr to eV/Angstrom)
-            self.results['forces'] = g * FORCE_CONVERSION
-            
-        # 6. Calculate dipole (convert Debye to e * Angstrom)
-        if 'dipole' in properties:
-            try:
-                dip_debye = mf.dip_moment(verbose=0)
-                self.results['dipole'] = dip_debye * 0.2081943
-            except Exception:
-                self.results['dipole'] = np.array([0.0, 0.0, 0.0])
+        # 4. Extract outputs
+        res_file = workspace_dir / "jobs" / job_id / "results.json"
+        if res_file.exists():
+            with open(res_file, encoding="utf-8") as f:
+                res_data = json.load(f)
+                
+            self.results['energy'] = res_data["energy_ev"]
+            if 'forces' in properties:
+                self.results['forces'] = np.array(res_data["forces_ev_angstrom"])
+            if 'dipole' in properties:
+                # Convert Debye to e * Angstrom (1 Debye = 0.2081943 e * Angstrom)
+                self.results['dipole'] = np.array(res_data["dipole_moment_debye"]) * 0.2081943
+        else:
+            # Fallback to cclib log file parsing
+            parsed = parse_qm_log_with_cclib(run_res.log_file)
+            if parsed.ok:
+                self.results['energy'] = parsed.energy_ev
+                if 'forces' in properties and parsed.forces_ev_angstrom:
+                    self.results['forces'] = np.array(parsed.forces_ev_angstrom)
+                if 'dipole' in properties:
+                    self.results['dipole'] = np.array(parsed.dipole_moment_debye) * 0.2081943
+            else:
+                raise RuntimeError(f"Calculation failed with exit code {run_res.return_code}: {run_res.stderr}")
 
 
 class RDKitCalculator(Calculator):
@@ -139,7 +167,8 @@ def run_single_point_engine(
     functional: str = "B3LYP",
     basis: str = "sto-3g",
     charge: int = 0,
-    spin: int = 0
+    spin: int = 0,
+    solvent: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Perform a single-point quantum or force-field calculation on a stored molecule.
@@ -177,97 +206,111 @@ def run_single_point_engine(
         
     # Load coordinates from workspace
     mol_rdkit = load_molecule_from_workspace(workspace_id, molecule_id)
-    xyz_path = workspace_manager.get_workspace_dir(workspace_id) / "molecules" / f"{molecule_id}.xyz"
+    workspace_dir = workspace_manager.get_workspace_dir(workspace_id)
+    xyz_path = workspace_dir / "molecules" / f"{molecule_id}.xyz"
+    xyz_content = xyz_path.read_text(encoding="utf-8")
     
-    # 1. Setup PySCF Molecule
-    mol_pyscf = gto.M(
-        atom=str(xyz_path),
-        basis=basis,
-        charge=charge,
-        spin=spin,
-        verbose=0
-    )
+    job_id = f"job_qm_{uuid.uuid4().hex[:8]}"
     
-    # 2. Setup SCF
-    method_upper = method.upper()
-    if method_upper == "HF":
-        if spin == 0:
-            mf = scf.RHF(mol_pyscf)
-        else:
-            mf = scf.UHF(mol_pyscf)
-    elif method_upper == "DFT":
-        if spin == 0:
-            mf = scf.RKS(mol_pyscf)
-        else:
-            mf = scf.UKS(mol_pyscf)
-        mf.xc = functional
+    config = {
+        "xyz_path": f"{molecule_id}.xyz",
+        "method": method,
+        "functional": functional,
+        "basis": basis,
+        "charge": charge,
+        "spin": spin,
+        "solvent": solvent,
+        "calculate_forces": False
+    }
+    
+    input_files = {
+        f"{molecule_id}.xyz": xyz_content,
+        "config.json": json.dumps(config, indent=2),
+        "pyscf_driver.py": get_pyscf_driver_code()
+    }
+    
+    runner = get_engine_runner()
+    if isinstance(runner, DockerContainerRunner):
+        cmd = ["python", "pyscf_driver.py", "config.json"]
     else:
-        raise ValueError(f"Unsupported quantum method: '{method}'")
+        cmd = [sys.executable, "pyscf_driver.py", "config.json"]
         
-    # Run calculation
-    energy_hartree = mf.kernel()
-    converged = bool(mf.converged)
+    run_res = runner.run_command(workspace_dir, job_id, cmd, input_files)
     
-    # 3. Dipole Moment (in Debye)
-    try:
-        dipole = mf.dip_moment()
-        if hasattr(dipole, "tolist"):
-            dipole_list = dipole.tolist()
-        else:
-            dipole_list = list(dipole)
-    except Exception:
-        dipole_list = [0.0, 0.0, 0.0]
+    res_file = workspace_dir / "jobs" / job_id / "results.json"
+    if res_file.exists():
+        with open(res_file, encoding="utf-8") as f:
+            res_data = json.load(f)
+            
+        converged = res_data["ok"]
+        energy_ev = res_data["energy_ev"]
+        energy_hartree = res_data["energy_hartree"]
+        dipole_list = res_data["dipole_moment_debye"]
         
-    # 4. HOMO / LUMO analysis (converted to eV)
-    mo_energy = mf.mo_energy
-    if spin == 0:
-        # Restricted Closed Shell
-        homo_idx = mol_pyscf.nelectron // 2 - 1
-        homo_ev = float(mo_energy[homo_idx] * HARTREE_TO_EV)
-        lumo_ev = float(mo_energy[homo_idx + 1] * HARTREE_TO_EV)
-        homo_lumo_gap = lumo_ev - homo_ev
+        mo_energies = res_data["mo_energies_ev"]
+        nocc = res_data["nocc"]
+        try:
+            if isinstance(nocc, list) and len(nocc) == 2:
+                homo_a = mo_energies[0][nocc[0] - 1]
+                lumo_a = mo_energies[0][nocc[0]]
+                homo_b = mo_energies[1][nocc[1] - 1]
+                lumo_b = mo_energies[1][nocc[1]]
+                homo_ev = max(homo_a, homo_b)
+                lumo_ev = min(lumo_a, lumo_b)
+            else:
+                homo_ev = mo_energies[0][nocc - 1]
+                lumo_ev = mo_energies[0][nocc]
+            homo_lumo_gap = max(0.0, lumo_ev - homo_ev)
+        except Exception:
+            homo_ev = 0.0
+            lumo_ev = 0.0
+            homo_lumo_gap = 0.0
+            
+        charges_list = res_data["mulliken_charges"]
+        atom_charges = []
+        for i in range(mol_rdkit.GetNumAtoms()):
+            atom_charges.append({
+                "index": i,
+                "element": mol_rdkit.GetAtomWithIdx(i).GetSymbol(),
+                "charge": float(charges_list[i]) if i < len(charges_list) else 0.0
+            })
     else:
-        # Unrestricted Open Shell (Alpha and Beta energies)
-        # alpha
-        homo_idx_a = mol_pyscf.nelec[0] - 1
-        homo_ev_a = float(mo_energy[0][homo_idx_a] * HARTREE_TO_EV)
-        lumo_ev_a = float(mo_energy[0][homo_idx_a + 1] * HARTREE_TO_EV)
-        # beta
-        homo_idx_b = mol_pyscf.nelec[1] - 1
-        homo_ev_b = float(mo_energy[1][homo_idx_b] * HARTREE_TO_EV)
-        lumo_ev_b = float(mo_energy[1][homo_idx_b + 1] * HARTREE_TO_EV)
+        # Fallback to cclib log file parsing
+        parsed = parse_qm_log_with_cclib(run_res.log_file)
+        converged = parsed.ok
+        energy_ev = parsed.energy_ev
+        energy_hartree = parsed.energy_hartree
+        dipole_list = parsed.dipole_moment_debye
+        homo_ev = parsed.homo_ev
+        lumo_ev = parsed.lumo_ev
+        homo_lumo_gap = parsed.homo_lumo_gap_ev
         
-        homo_ev = max(homo_ev_a, homo_ev_b)
-        lumo_ev = min(lumo_ev_a, lumo_ev_b)
-        homo_lumo_gap = max(0.0, lumo_ev - homo_ev)
-        
-    # 5. Mulliken population charges
-    try:
-        _, mulliken_charges = mf.pop(verbose=0)
-        charges_list = mulliken_charges.tolist()
-    except Exception:
-        charges_list = [0.0] * mol_pyscf.natm
-        
-    atom_charges = []
-    for i in range(mol_pyscf.natm):
-        atom_charges.append({
-            "index": i,
-            "element": mol_pyscf.atom_symbol(i),
-            "charge": float(charges_list[i])
-        })
+        atom_charges = []
+        for charge_item in parsed.mulliken_charges:
+            atom_charges.append({
+                "index": charge_item.index,
+                "element": charge_item.element,
+                "charge": charge_item.charge
+            })
+            
+    warnings = []
+    if not converged:
+        warnings.append({"type": "SCF_CONVERGENCE", "message": "SCF did not converge."})
+    if run_res.return_code != 0:
+        warnings.append({"type": "RUN_ERROR", "message": run_res.stderr})
         
     return {
-        "ok": converged,
+        "ok": converged and run_res.return_code == 0,
         "results": {
             "energy_hartree": float(energy_hartree),
-            "energy_ev": float(energy_hartree * HARTREE_TO_EV),
+            "energy_ev": float(energy_ev),
             "dipole_moment_debye": dipole_list,
             "homo_ev": homo_ev,
             "lumo_ev": lumo_ev,
             "homo_lumo_gap_ev": homo_lumo_gap,
             "mulliken_charges": atom_charges
         },
-        "warnings": [] if converged else [{"type": "SCF_CONVERGENCE", "message": "SCF did not converge."}]
+        "warnings": warnings
     }
 
 
@@ -280,7 +323,8 @@ def optimize_geometry_engine(
     charge: int = 0,
     spin: int = 0,
     max_steps: int = 50,
-    progress_callback: Optional[Callable[[str], None]] = None
+    progress_callback: Optional[Callable[[str], None]] = None,
+    solvent: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Perform geometry optimization using ASE LBFGS optimizer coupled with PySCF or RDKit calculator.
@@ -308,7 +352,7 @@ def optimize_geometry_engine(
     else:
         if not PYSCF_AVAILABLE:
             raise RuntimeError("PySCF is not available on this Windows host. Please run inside Linux/Docker.")
-        calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin)
+        calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin, solvent=solvent)
         
     atoms.calc = calc
     
@@ -370,3 +414,161 @@ def optimize_geometry_engine(
         "xyz_block": xyz_block,
         "sdf_block": sdf_block
     }
+
+
+def estimate_time_seconds(workspace_id: str, molecule_id: str, method: str, basis: str) -> int:
+    """Estimate execution time based on molecule size, method, and basis set."""
+    try:
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+        natoms = mol.GetNumAtoms()
+    except Exception:
+        natoms = 5  # Fallback
+        
+    method_upper = method.upper()
+    if method_upper in ("MMFF94", "UFF"):
+        return 2
+        
+    basis_clean = basis.lower().strip()
+    if "6-31g" in basis_clean:
+        factor = 0.4
+    elif "sto-3g" in basis_clean:
+        factor = 0.08
+    else:
+        factor = 1.2
+        
+    # DFT/HF scaling is O(N^3)
+    est = int(factor * (natoms ** 3))
+    return max(5, min(3600, est))
+
+
+def run_pyscf_properties_engine(
+    workspace_id: str,
+    molecule_id: str,
+    method: str = "DFT",
+    functional: str = "B3LYP",
+    basis: str = "sto-3g",
+    charge: int = 0,
+    spin: int = 0,
+    properties: List[str] = None,
+    solvent: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Perform a PySCF calculation and compute expanded properties (ESP, Loewdin pop, orbital cubes).
+    """
+    if properties is None:
+        properties = ["mulliken", "loewdin", "esp", "homo_lumo_cubes"]
+        
+    if not PYSCF_AVAILABLE:
+        raise RuntimeError("PySCF is not available on this Windows host. Please run inside Linux/Docker.")
+        
+    mol_rdkit = load_molecule_from_workspace(workspace_id, molecule_id)
+    workspace_dir = workspace_manager.get_workspace_dir(workspace_id)
+    xyz_path = workspace_dir / "molecules" / f"{molecule_id}.xyz"
+    xyz_content = xyz_path.read_text(encoding="utf-8")
+    
+    job_id = f"job_qm_prop_{uuid.uuid4().hex[:8]}"
+    
+    config = {
+        "xyz_path": f"{molecule_id}.xyz",
+        "method": method,
+        "functional": functional,
+        "basis": basis,
+        "charge": charge,
+        "spin": spin,
+        "solvent": solvent,
+        "calculate_forces": False,
+        "properties": properties
+    }
+    
+    input_files = {
+        f"{molecule_id}.xyz": xyz_content,
+        "config.json": json.dumps(config, indent=2),
+        "pyscf_driver.py": get_pyscf_driver_code()
+    }
+    
+    runner = get_engine_runner()
+    if isinstance(runner, DockerContainerRunner):
+        cmd = ["python", "pyscf_driver.py", "config.json"]
+    else:
+        cmd = [sys.executable, "pyscf_driver.py", "config.json"]
+        
+    run_res = runner.run_command(workspace_dir, job_id, cmd, input_files)
+    
+    res_file = workspace_dir / "jobs" / job_id / "results.json"
+    if not res_file.exists():
+        return {
+            "ok": False,
+            "error": {
+                "code": "CALCULATION_FAILED",
+                "message": "Calculation failed or results file is missing.",
+                "details": run_res.stderr
+            }
+        }
+        
+    with open(res_file, encoding="utf-8") as f:
+        res_data = json.load(f)
+        
+    # Read back results
+    converged = res_data["ok"]
+    energy_ev = res_data["energy_ev"]
+    energy_hartree = res_data["energy_hartree"]
+    dipole_list = res_data["dipole_moment_debye"]
+    
+    # Mulliken
+    charges_list = res_data["mulliken_charges"]
+    mulliken_charges = []
+    for i in range(mol_rdkit.GetNumAtoms()):
+        mulliken_charges.append({
+            "index": i,
+            "element": mol_rdkit.GetAtomWithIdx(i).GetSymbol(),
+            "charge": float(charges_list[i]) if i < len(charges_list) else 0.0
+        })
+        
+    # Loewdin
+    loewdin_list = res_data.get("loewdin_charges", [])
+    loewdin_charges = []
+    for i in range(mol_rdkit.GetNumAtoms()):
+        loewdin_charges.append({
+            "index": i,
+            "element": mol_rdkit.GetAtomWithIdx(i).GetSymbol(),
+            "charge": float(loewdin_list[i]) if i < len(loewdin_list) else 0.0
+        })
+        
+    # Register cube files
+    registered_artifacts = []
+    from ypotheto_compchem_mcp.artifacts import register_artifact
+    for cube_name, title in [("homo.cube", "HOMO Orbital"), ("lumo.cube", "LUMO Orbital"), ("esp.cube", "Electrostatic Potential")]:
+        cube_file = workspace_dir / "jobs" / job_id / cube_name
+        if cube_file.exists():
+            cube_bytes = cube_file.read_bytes()
+            art = register_artifact(f"{molecule_id}_{cube_name}", cube_bytes, "structure", f"{title} Volume (Cube)")
+            registered_artifacts.append(art)
+            
+    results = {
+        "converged": converged,
+        "energy_hartree": energy_hartree,
+        "energy_ev": energy_ev,
+        "dipole_moment_debye": dipole_list,
+        "mulliken_charges": mulliken_charges,
+        "loewdin_charges": loewdin_charges,
+        "artifacts": registered_artifacts
+    }
+    
+    mull_str = ", ".join(f"{c['element']}{c['index']}:{round(c['charge'], 3)}" for c in mulliken_charges[:4])
+    loew_str = ", ".join(f"{c['element']}{c['index']}:{round(c['charge'], 3)}" for c in loew_charges[:4])
+    
+    interpretation = (
+        f"Calculated expanded properties for {molecule_id}.\n"
+        f"Energy = {energy_ev} eV.\n"
+        f"Mulliken charges: {mull_str}...\n"
+        f"Loewdin charges: {loew_str}...\n"
+        f"Generated {len(registered_artifacts)} volumetric cube artifacts."
+    )
+    
+    return {
+        "ok": True,
+        "results": results,
+        "warnings": [],
+        "interpretation": interpretation
+    }
+
