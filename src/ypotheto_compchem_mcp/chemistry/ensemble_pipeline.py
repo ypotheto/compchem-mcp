@@ -15,6 +15,7 @@ from ypotheto_compchem_mcp.chemistry.xtb_engine import (
     XTB_AVAILABLE,
     CREST_AVAILABLE
 )
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError, CompchemError
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +84,11 @@ def run_ensemble_thermochemistry_engine(
     4. Compute Boltzmann populations and ensemble-averaged free energies.
     """
     if not CREST_AVAILABLE or not XTB_AVAILABLE:
-        raise RuntimeError("CREST and xTB binaries are required to run the ensemble thermochemistry pipeline.")
-        
+        raise BackendUnavailableError(
+            "CREST and xTB binaries are required to run the ensemble thermochemistry pipeline.",
+            hint="Install the crest and xtb binaries to run ensemble thermochemistry."
+        )
+
     # Step 1: Run CREST conformer search
     logger.info(f"Starting CREST conformer search for {molecule_id}")
     crest_res = run_conformer_search_engine(
@@ -94,19 +98,13 @@ def run_ensemble_thermochemistry_engine(
         solvent=solvent,
         energy_window_kcal=energy_window_kcal
     )
-    
-    if not crest_res["ok"]:
-        return crest_res
-        
+
     conformers = crest_res["results"]["conformers"]
     if not conformers:
-        return {
-            "ok": False,
-            "error": {
-                "code": "NO_CONFORMERS_FOUND",
-                "message": "CREST conformer search returned no structures."
-            }
-        }
+        raise CalculationFailedError(
+            "CREST conformer search returned no structures.",
+            hint="Try a larger energy_window_kcal, or check that the input geometry is valid."
+        )
         
     # Sort conformers by relative energy
     conformers = sorted(conformers, key=lambda c: c["relative_energy_kcal"])
@@ -148,39 +146,41 @@ def run_ensemble_thermochemistry_engine(
             {"formula": formula, "num_atoms": conf_mol.GetNumAtoms()}
         )
         
-        # Geometry Optimization
-        opt_res = run_xtb_calculation_engine(
-            workspace_id,
-            conf_mol_id,
-            task="geometry_optimization",
-            method=method,
-            solvent=solvent,
-            charge=charge,
-            spin=spin
-        )
-        
-        if not opt_res["ok"]:
-            logger.warning(f"Optimization failed for conformer {i}: {opt_res.get('error')}")
+        # Geometry Optimization. run_xtb_calculation_engine now raises on failure
+        # instead of returning {"ok": False, ...} - catch it here so one bad
+        # conformer doesn't abort the whole ensemble; skip and continue as before.
+        try:
+            opt_res = run_xtb_calculation_engine(
+                workspace_id,
+                conf_mol_id,
+                task="geometry_optimization",
+                method=method,
+                solvent=solvent,
+                charge=charge,
+                spin=spin
+            )
+        except CompchemError as e:
+            logger.warning(f"Optimization failed for conformer {i}: {e}")
             continue
-            
+
         # Get optimized energy
         opt_energy_ev = opt_res["results"]["energy_ev"]
-        
+
         # Vibrations / Hess calculation
-        vib_res = run_xtb_calculation_engine(
-            workspace_id,
-            conf_mol_id,
-            task="vibrations",
-            method=method,
-            solvent=solvent,
-            charge=charge,
-            spin=spin
-        )
-        
-        if not vib_res["ok"]:
-            logger.warning(f"Vibration check failed for conformer {i}: {vib_res.get('error')}")
+        try:
+            vib_res = run_xtb_calculation_engine(
+                workspace_id,
+                conf_mol_id,
+                task="vibrations",
+                method=method,
+                solvent=solvent,
+                charge=charge,
+                spin=spin
+            )
+        except CompchemError as e:
+            logger.warning(f"Vibration check failed for conformer {i}: {e}")
             continue
-            
+
         freqs = vib_res["results"]["frequencies_cm1"]
         
         # Convert RDKit structure to ASE Atoms for thermochemistry properties
@@ -206,13 +206,10 @@ def run_ensemble_thermochemistry_engine(
         })
         
     if not refined_results:
-        return {
-            "ok": False,
-            "error": {
-                "code": "REFINEMENT_FAILED",
-                "message": "Failed to optimize and run frequency checks on any conformers."
-            }
-        }
+        raise CalculationFailedError(
+            "Failed to optimize and run frequency checks on any conformers.",
+            hint="Check server logs for the per-conformer xtb failures logged above."
+        )
         
     # Step 4: Calculate Boltzmann weighting on the refined Gibbs energies (T = 298.15 K)
     T = 298.15

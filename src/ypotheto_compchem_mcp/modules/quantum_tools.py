@@ -1,10 +1,13 @@
 from typing import Optional, List
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response, build_provenance
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.qm_engine import run_single_point_engine, optimize_geometry_engine, run_pyscf_properties_engine, PYSCF_AVAILABLE, estimate_time_seconds as _estimate_time_seconds
+
+_PYSCF_UNAVAILABLE_HINT = "Install pyscf, or run inside the project's Docker image which includes it."
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -64,7 +67,10 @@ def run_single_point(
     - solvent: Implicit solvent model name (e.g. water, methanol, benzene)
     """
     if not PYSCF_AVAILABLE:
-        raise RuntimeError("PySCF is not installed or available on this system host.")
+        raise BackendUnavailableError(
+            "PySCF is not installed or available on this system host.",
+            hint=_PYSCF_UNAVAILABLE_HINT
+        )
         
     workspace_id = get_workspace_id()
     
@@ -168,7 +174,10 @@ def optimize_geometry(
     - solvent: Implicit solvent model name (e.g. water, methanol, benzene)
     """
     if not PYSCF_AVAILABLE:
-        raise RuntimeError("PySCF is not installed or available on this system host.")
+        raise BackendUnavailableError(
+            "PySCF is not installed or available on this system host.",
+            hint=_PYSCF_UNAVAILABLE_HINT
+        )
         
     workspace_id = get_workspace_id()
     
@@ -278,7 +287,10 @@ def run_pyscf_properties(
     - solvent: Implicit solvent model name (e.g. water, methanol, benzene)
     """
     if not PYSCF_AVAILABLE:
-        raise RuntimeError("PySCF is not installed or available on this system host.")
+        raise BackendUnavailableError(
+            "PySCF is not installed or available on this system host.",
+            hint=_PYSCF_UNAVAILABLE_HINT
+        )
         
     workspace_id = get_workspace_id()
     
@@ -332,10 +344,7 @@ def run_pyscf_properties(
     res = run_pyscf_properties_engine(
         workspace_id, molecule_id, method, functional, basis, charge, spin, properties, solvent
     )
-    
-    if not res["ok"]:
-        return make_error_response(res["error"]["code"], res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"],

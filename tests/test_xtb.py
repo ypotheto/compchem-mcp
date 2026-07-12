@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 from rdkit import Chem
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine, load_molecule_from_workspace
 from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 from ypotheto_compchem_mcp.chemistry.xtb_engine import (
     run_xtb_calculation_engine,
     run_conformer_search_engine
@@ -32,6 +32,32 @@ def test_crest_missing_throws():
         tool_res = run_conformer_search("mol", run_async=False)
     assert tool_res["ok"] is False
     assert tool_res["error"]["code"] == "BACKEND_UNAVAILABLE"
+
+@patch("ypotheto_compchem_mcp.chemistry.xtb_engine.XTB_AVAILABLE", True)
+@patch("subprocess.run")
+def test_xtb_nonzero_exit_raises_calculation_failed(mock_run):
+    """run_xtb_calculation_engine used to return {"ok": False, "error": {"code":
+    "XTB_EXECUTION_FAILED", ...}} on a nonzero exit code; it now raises
+    CalculationFailedError, converted to a clean error envelope by the tool decorator."""
+    workspace_id = get_workspace_id()
+    mol_res = build_molecule_from_smiles_engine("O", "Water for xtb failure test")
+    molecule_id = mol_res["molecule_id"]
+
+    mock_proc = MagicMock()
+    mock_proc.returncode = 1
+    mock_proc.stdout = ""
+    mock_proc.stderr = "normal termination of xtb did not happen"
+    mock_run.return_value = mock_proc
+
+    with pytest.raises(CalculationFailedError) as exc:
+        run_xtb_calculation_engine(workspace_id, molecule_id, task="single_point")
+    assert "exit code 1" in str(exc.value)
+
+    with patch("ypotheto_compchem_mcp.modules.xtb_tools.XTB_AVAILABLE", True):
+        tool_res = run_xtb_calculation(molecule_id, task="single_point", run_async=False)
+    assert tool_res["ok"] is False
+    assert tool_res["error"]["code"] == "CALCULATION_FAILED"
+
 
 @patch("ypotheto_compchem_mcp.chemistry.xtb_engine.XTB_AVAILABLE", True)
 @patch("subprocess.run")

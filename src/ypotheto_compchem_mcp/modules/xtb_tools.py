@@ -83,9 +83,7 @@ def run_xtb_calculation(
         )
         
     res = run_xtb_calculation_engine(workspace_id, molecule_id, task, method, solvent, charge, spin)
-    if not res["ok"]:
-        return make_error_response(res["error"]["code"], res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"],
@@ -155,9 +153,7 @@ def run_conformer_search(
         )
         
     res = run_conformer_search_engine(workspace_id, molecule_id, method, solvent, energy_window_kcal)
-    if not res["ok"]:
-        return make_error_response(res["error"]["code"], res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"],

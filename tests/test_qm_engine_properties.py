@@ -1,8 +1,11 @@
 import json
+import pytest
 from unittest.mock import MagicMock, patch
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
 from ypotheto_compchem_mcp.chemistry.qm_engine import run_pyscf_properties_engine
+from ypotheto_compchem_mcp.errors import CalculationFailedError
+from ypotheto_compchem_mcp.modules.quantum_tools import run_pyscf_properties
 from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 
 
@@ -47,3 +50,28 @@ def test_run_pyscf_properties_engine_builds_interpretation_without_crashing(mock
     assert res["results"]["loewdin_charges"][0]["charge"] == -0.3
     assert "interpretation" in res
     assert "Loewdin charges: O0:-0.3" in res["interpretation"]
+
+
+@patch("ypotheto_compchem_mcp.chemistry.qm_engine.PYSCF_AVAILABLE", True)
+@patch("ypotheto_compchem_mcp.chemistry.qm_engine.get_engine_runner")
+def test_run_pyscf_properties_engine_raises_when_results_file_missing(mock_get_runner):
+    """When the driver produces no results.json (crash/timeout), the engine
+    must raise a typed CalculationFailedError rather than returning an
+    {"ok": False, ...} dict for the caller to manually unwrap."""
+    workspace_id = get_workspace_id()
+    mol_res = build_molecule_from_smiles_engine("O", "Water for missing results")
+    molecule_id = mol_res["molecule_id"]
+
+    mock_runner = MagicMock()
+    mock_runner.run_command.return_value = MagicMock(stderr="pyscf_driver.py crashed with SegFault")
+    mock_get_runner.return_value = mock_runner
+
+    with pytest.raises(CalculationFailedError) as exc:
+        run_pyscf_properties_engine(workspace_id, molecule_id, method="DFT")
+    assert "results file is missing" in str(exc.value)
+
+    with patch("ypotheto_compchem_mcp.modules.quantum_tools.PYSCF_AVAILABLE", True), \
+         patch("ypotheto_compchem_mcp.modules.quantum_tools._estimate_time_seconds", return_value=3):
+        tool_res = run_pyscf_properties(molecule_id, method="DFT", run_async=False)
+    assert tool_res["ok"] is False
+    assert tool_res["error"]["code"] == "CALCULATION_FAILED"

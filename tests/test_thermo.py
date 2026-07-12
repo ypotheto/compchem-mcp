@@ -63,6 +63,30 @@ def test_run_mixture_flash_sync(mock_julia_and_cantera):
     assert results["liquid_mole_fractions"] == [0.1, 0.9]
     assert results["vapor_mole_fractions"] == [0.8, 0.2]
 
+def test_run_mixture_flash_model_init_failure_returns_calculation_failed(mock_julia_and_cantera):
+    """run_mixture_flash_engine used to return {"ok": False, "error": {"code": "MODEL_INIT_FAILED", ...}}
+    for a bad model/component combination; it now raises CalculationFailedError,
+    which the tool decorator converts to a CALCULATION_FAILED error envelope."""
+    te, tt = mock_julia_and_cantera
+    te.CLAPEYRON_AVAILABLE = True
+    tt.CLAPEYRON_AVAILABLE = True
+
+    te.jl.seval.side_effect = RuntimeError("unknown component 'notarealchemical'")
+
+    res = tt.run_mixture_flash(
+        components=["notarealchemical", "water"],
+        mole_fractions=[0.4, 0.6],
+        temperature_k=350.0,
+        pressure_pa=101325.0,
+        model="PC-SAFT",
+        flash_type="VLE",
+        run_async=False
+    )
+    assert res["ok"] is False
+    assert res["error"]["code"] == "CALCULATION_FAILED"
+    assert "Failed to initialize Clapeyron model" in res["error"]["message"]
+
+
 def test_run_mixture_flash_supports_more_than_two_components(mock_julia_and_cantera):
     """
     The Julia snippet's `x[:, 1]` / `x[:, 2]` index PHASES (liquid, vapor), not

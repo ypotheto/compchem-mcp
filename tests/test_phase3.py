@@ -19,17 +19,18 @@ def test_estimate_calculation_time():
     assert "estimated to take" in envelope["interpretation"]
 
 def test_qm_pyscf_unavailable_on_windows():
-    # Since the tools are decorated with @mcp_tool_decorator, they don't raise RuntimeError to the caller.
-    # Instead, the decorator catches it and returns a standard error envelope {"ok": False, "error": {...}}
+    # Since the tools are decorated with @mcp_tool_decorator, they don't raise to the caller.
+    # Instead, the decorator catches the typed BackendUnavailableError and returns a standard
+    # error envelope {"ok": False, "error": {...}}.
     with patch("ypotheto_compchem_mcp.modules.quantum_tools.PYSCF_AVAILABLE", False):
         envelope = run_single_point("mol_dummy")
         assert envelope["ok"] is False
-        assert envelope["error"]["code"] == "INTERNAL_ERROR"
+        assert envelope["error"]["code"] == "BACKEND_UNAVAILABLE"
         assert "not installed or available" in envelope["error"]["message"]
-        
+
         envelope = optimize_geometry("mol_dummy")
         assert envelope["ok"] is False
-        assert envelope["error"]["code"] == "INTERNAL_ERROR"
+        assert envelope["error"]["code"] == "BACKEND_UNAVAILABLE"
         assert "not installed or available" in envelope["error"]["message"]
 
 @patch("ypotheto_compchem_mcp.modules.quantum_tools.PYSCF_AVAILABLE", True)

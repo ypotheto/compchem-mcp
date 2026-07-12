@@ -95,10 +95,7 @@ def run_ensemble_thermochemistry(
         charge,
         spin
     )
-    
-    if not res["ok"]:
-        return make_error_response(res["error"]["code"], res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"],

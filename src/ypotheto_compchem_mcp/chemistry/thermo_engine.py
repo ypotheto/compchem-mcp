@@ -3,7 +3,7 @@ import sys
 import logging
 from typing import Any, Dict, List, Optional
 
-from ypotheto_compchem_mcp.errors import ValidationError
+from ypotheto_compchem_mcp.errors import ValidationError, BackendUnavailableError, CalculationFailedError
 
 logger = logging.getLogger(__name__)
 
@@ -51,24 +51,24 @@ def run_mixture_flash_engine(
     Perform a thermodynamic flash calculation on a mixture using Clapeyron.jl.
     """
     if not CLAPEYRON_AVAILABLE:
-        raise RuntimeError("Clapeyron.jl/juliacall is not available on this host.")
-        
+        raise BackendUnavailableError(
+            "Clapeyron.jl/juliacall is not available on this host.",
+            hint="Install juliacall and Julia's Clapeyron package, or run inside the project's Docker image."
+        )
+
     comps = [c.lower() for c in components]
     model_name_upper = model_name.upper().replace("-", "")
-    
+
     comps_jl_str = ", ".join(f'"{c}"' for c in comps)
     model_init_code = f'{model_name_upper}([{comps_jl_str}])'
-    
+
     try:
         model = jl.seval(model_init_code)
     except Exception as e:
-        return {
-            "ok": False,
-            "error": {
-                "code": "MODEL_INIT_FAILED",
-                "message": f"Failed to initialize Clapeyron model '{model_name}': {str(e)}"
-            }
-        }
+        raise CalculationFailedError(
+            f"Failed to initialize Clapeyron model '{model_name}': {str(e)}",
+            hint="Check that the model name and component names are valid for Clapeyron.jl."
+        ) from e
         
     try:
         # Pass variables to Julia Main
@@ -104,13 +104,10 @@ def run_mixture_flash_engine(
             "interpretation": interpretation
         }
     except Exception as e:
-        return {
-            "ok": False,
-            "error": {
-                "code": "FLASH_CALCULATION_FAILED",
-                "message": f"Equilibrium flash calculation failed: {str(e)}."
-            }
-        }
+        raise CalculationFailedError(
+            f"Equilibrium flash calculation failed: {str(e)}.",
+            hint="Check that temperature/pressure/composition are physically reasonable for this model."
+        ) from e
 
 def run_reactor_kinetics_engine(
     workspace_id: str,
@@ -124,15 +121,21 @@ def run_reactor_kinetics_engine(
     Simulate chemical kinetics and species concentrations over time using Cantera.
     """
     if not CANTERA_AVAILABLE:
-        raise RuntimeError("Cantera is not available on this host.")
-        
+        raise BackendUnavailableError(
+            "Cantera is not available on this host.",
+            hint="Install cantera, or run inside the project's Docker image which includes it."
+        )
+
     try:
         gas = ct.Solution(mechanism)
     except Exception as e:
         try:
             gas = ct.Solution("gri30.yaml")
         except Exception:
-            raise RuntimeError(f"Could not load mechanism '{mechanism}': {str(e)}")
+            raise CalculationFailedError(
+                f"Could not load mechanism '{mechanism}': {str(e)}",
+                hint="Check the mechanism filename, or use a built-in mechanism like 'gri30.yaml'."
+            ) from e
             
     T = initial_state.get("temperature", 300.0)
     P = initial_state.get("pressure", 101325.0)
@@ -234,8 +237,11 @@ def calculate_transport_properties_engine(
     """
     if model.lower() == "cantera":
         if not CANTERA_AVAILABLE:
-            raise RuntimeError("Cantera is not available on this host.")
-            
+            raise BackendUnavailableError(
+                "Cantera is not available on this host.",
+                hint="Install cantera, or run inside the project's Docker image which includes it."
+            )
+
         try:
             gas = ct.Solution("gri30.yaml")
             comp_dict = {c.upper(): f for c, f in zip(components, mole_fractions)}
@@ -266,13 +272,10 @@ def calculate_transport_properties_engine(
                 "interpretation": interpretation
             }
         except Exception as e:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "CANTERA_TRANSPORT_FAILED",
-                    "message": f"Cantera transport calculation failed: {str(e)}"
-                }
-            }
+            raise CalculationFailedError(
+                f"Cantera transport calculation failed: {str(e)}",
+                hint="Check that the component names match the mechanism's species and the state is physically reasonable."
+            ) from e
     else:
         raise ValidationError(
             f"Unknown transport model '{model}'.",

@@ -11,7 +11,7 @@ from ypotheto_compchem_mcp.chemistry.builder_engine import (
     load_molecule_from_workspace,
     save_molecule_coords
 )
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 
 logger = logging.getLogger(__name__)
 
@@ -83,15 +83,11 @@ def run_xtb_calculation_engine(
         )
         
         if result.returncode != 0:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "XTB_EXECUTION_FAILED",
-                    "message": f"xTB calculation failed with exit code {result.returncode}.",
-                    "details": result.stderr or result.stdout
-                }
-            }
-            
+            raise CalculationFailedError(
+                f"xTB calculation failed with exit code {result.returncode}.",
+                hint=(result.stderr or result.stdout or "Check the input geometry, charge, and spin multiplicity.")
+            )
+
         # Parse stdout
         stdout = result.stdout
         energy = None
@@ -220,28 +216,21 @@ def run_conformer_search_engine(
         )
         
         if result.returncode != 0:
-            return {
-                "ok": False,
-                "error": {
-                    "code": "CREST_EXECUTION_FAILED",
-                    "message": f"CREST conformer search failed with exit code {result.returncode}.",
-                    "details": result.stderr or result.stdout
-                }
-            }
-            
+            raise CalculationFailedError(
+                f"CREST conformer search failed with exit code {result.returncode}.",
+                hint=(result.stderr or result.stdout or "Check the input geometry, charge, and spin multiplicity.")
+            )
+
         # Parse conformer ensemble
         # CREST writes all conformers to 'crest_conformers.xyz'
         conformers_xyz_path = os.path.join(tmpdir, "crest_conformers.xyz")
         energies_path = os.path.join(tmpdir, "crest.energies")
-        
+
         if not os.path.exists(conformers_xyz_path) or not os.path.exists(energies_path):
-            return {
-                "ok": False,
-                "error": {
-                    "code": "CREST_OUTPUT_MISSING",
-                    "message": "CREST completed but conformer output files are missing."
-                }
-            }
+            raise CalculationFailedError(
+                "CREST completed but conformer output files are missing.",
+                hint="Check server logs for the CREST run; this usually indicates CREST exited early."
+            )
             
         # Read energies
         energies = []

@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional
 from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
-from ypotheto_compchem_mcp.errors import ValidationError
+from ypotheto_compchem_mcp.errors import ValidationError, BackendUnavailableError
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.thermo_engine import (
@@ -37,7 +37,10 @@ def run_mixture_flash(
     - run_async: If true, runs calculation in background and returns job ID.
     """
     if not CLAPEYRON_AVAILABLE:
-        raise RuntimeError("Clapeyron.jl/juliacall is not available or Julia environment is not set up.")
+        raise BackendUnavailableError(
+            "Clapeyron.jl/juliacall is not available or Julia environment is not set up.",
+            hint="Install juliacall and Julia's Clapeyron package, or run inside the project's Docker image."
+        )
 
     if len(components) != len(mole_fractions):
         raise ValidationError(
@@ -74,9 +77,7 @@ def run_mixture_flash(
         )
         
     res = run_mixture_flash_engine(workspace_id, components, mole_fractions, temperature_k, pressure_pa, model, flash_type)
-    if not res["ok"]:
-        return make_error_response(res["error"]["code"], res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"],
@@ -106,8 +107,11 @@ def run_reactor_kinetics(
     - run_async: If true, runs simulation in background (strongly recommended, default is True).
     """
     if not CANTERA_AVAILABLE:
-        raise RuntimeError("Cantera is not available on this host.")
-        
+        raise BackendUnavailableError(
+            "Cantera is not available on this host.",
+            hint="Install cantera, or run inside the project's Docker image which includes it."
+        )
+
     workspace_id = get_workspace_id()
     est_sec = 5
     
@@ -134,9 +138,7 @@ def run_reactor_kinetics(
         )
         
     res = run_reactor_kinetics_engine(workspace_id, mechanism, initial_state, reactor_type, residence_time_s, steps)
-    if not res["ok"]:
-        return make_error_response("REACTOR_SIMULATION_FAILED", res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"],
@@ -172,9 +174,7 @@ def calculate_transport_properties(
         return make_error_response("INVALID_ARGUMENT", "Mole fractions must sum to 1.0.")
 
     res = calculate_transport_properties_engine(components, mole_fractions, temperature_k, pressure_pa, model)
-    if not res["ok"]:
-        return make_error_response(res["error"]["code"], res["error"]["message"])
-        
+
     return make_success_response(
         results=res["results"],
         interpretation=res["interpretation"]

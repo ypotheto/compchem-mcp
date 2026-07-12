@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 from rdkit import Chem
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
 from ypotheto_compchem_mcp.workspace import get_workspace_id
+from ypotheto_compchem_mcp.errors import CalculationFailedError
 from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import run_ensemble_thermochemistry_engine
 from ypotheto_compchem_mcp.modules.ensemble_tools import run_ensemble_thermochemistry
 
@@ -104,6 +105,71 @@ def test_ensemble_pipeline_success(mock_xtb, mock_crest):
     
     # Ensemble free energy should lie between the two conformer values
     assert conf0["total_gibbs_energy_ev"] < results["ensemble_gibbs_free_energy_ev"] < conf1["total_gibbs_energy_ev"]
+
+@patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.CREST_AVAILABLE", True)
+@patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.XTB_AVAILABLE", True)
+@patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.run_conformer_search_engine")
+@patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.run_xtb_calculation_engine")
+def test_ensemble_pipeline_skips_conformer_that_raises_and_continues(mock_xtb, mock_crest):
+    """
+    run_xtb_calculation_engine now raises a typed CompchemError on failure
+    instead of returning {"ok": False, ...}. The ensemble pipeline must still
+    gracefully skip a conformer whose optimization/vibration call fails and
+    continue refining the remaining ones, rather than letting one bad
+    conformer abort the whole calculation.
+    """
+    workspace_id = get_workspace_id()
+    mol_res = build_molecule_from_smiles_engine("O", "Water for resilience test")
+    molecule_id = mol_res["molecule_id"]
+
+    mock_crest.return_value = {
+        "ok": True,
+        "results": {
+            "molecule_id": molecule_id,
+            "num_conformers": 2,
+            "conformers": [
+                {
+                    "conformer_id": f"{molecule_id}_conf_0",
+                    "energy_hartree": -5.070,
+                    "energy_ev": -137.9,
+                    "relative_energy_kcal": 0.0,
+                    "xyz_block": "3\nconf 0\nO 0.0 0.0 0.1\nH 0.0 0.7 -0.4\nH 0.0 -0.7 -0.4"
+                },
+                {
+                    "conformer_id": f"{molecule_id}_conf_1",
+                    "energy_hartree": -5.068,
+                    "energy_ev": -137.8,
+                    "relative_energy_kcal": 1.25,
+                    "xyz_block": "3\nconf 1\nO 0.0 0.0 0.2\nH 0.0 0.7 -0.4\nH 0.0 -0.7 -0.4"
+                }
+            ]
+        }
+    }
+
+    def xtb_side_effect(ws, mol_id, task, **kwargs):
+        if "ref_1" in mol_id:
+            raise CalculationFailedError("xtb geometry optimization did not converge for this conformer.")
+        if task == "geometry_optimization":
+            return {"ok": True, "results": {"energy_ev": -138.0, "dipole_moment_debye": [0.0, 0.0, 1.8]}}
+        elif task == "vibrations":
+            return {"ok": True, "results": {"frequencies_cm1": [1594.0, 3657.0, 3756.0]}}
+        raise AssertionError(f"unexpected task {task}")
+
+    mock_xtb.side_effect = xtb_side_effect
+
+    res = run_ensemble_thermochemistry_engine(
+        workspace_id,
+        molecule_id,
+        method="GFN2-xTB",
+        max_conformers_to_optimize=2,
+        energy_threshold_kcal=3.0
+    )
+
+    assert res["ok"] is True
+    # Only conformer 0 survives refinement; conformer 1 was skipped, not fatal.
+    assert len(res["results"]["refined_conformers"]) == 1
+    assert res["results"]["refined_conformers"][0]["electronic_energy_ev"] == -138.0
+
 
 @patch("ypotheto_compchem_mcp.modules.ensemble_tools.CREST_AVAILABLE", False)
 def test_ensemble_pipeline_missing_binaries_graceful_fail():

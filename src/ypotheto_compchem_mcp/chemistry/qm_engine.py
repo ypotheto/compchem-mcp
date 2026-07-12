@@ -15,6 +15,7 @@ from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_wo
 from ypotheto_compchem_mcp.workspace import workspace_manager, get_workspace_id
 from ypotheto_compchem_mcp.chemistry.runner import get_engine_runner, DockerContainerRunner
 from ypotheto_compchem_mcp.chemistry.parser import parse_qm_log_with_cclib
+from ypotheto_compchem_mcp.errors import CalculationFailedError
 
 # Hartree to eV conversion factor
 HARTREE_TO_EV = 27.211386245988
@@ -496,15 +497,11 @@ def run_pyscf_properties_engine(
     
     res_file = workspace_dir / "jobs" / job_id / "results.json"
     if not res_file.exists():
-        return {
-            "ok": False,
-            "error": {
-                "code": "CALCULATION_FAILED",
-                "message": "Calculation failed or results file is missing.",
-                "details": run_res.stderr
-            }
-        }
-        
+        raise CalculationFailedError(
+            "Calculation failed or results file is missing.",
+            hint=run_res.stderr or "Check server logs for the underlying PySCF driver error."
+        )
+
     with open(res_file, encoding="utf-8") as f:
         res_data = json.load(f)
         
