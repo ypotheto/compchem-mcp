@@ -2,6 +2,45 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] - Phase 6: advisor & guidance layer
+
+### Added
+- `src/ypotheto_compchem_mcp/content/concepts.yaml`: 30 plain-language
+  explanations of core computational chemistry concepts (basis sets, DFT
+  functional choice, HF vs. DFT, GFN2-xTB vs. DFT, when to trust an MLFF,
+  ZPE, Gibbs thermochemistry, conformer ensembles, Boltzmann weighting,
+  transition states, NEB, activation barriers, HOMO/LUMO gap, Mulliken vs.
+  Löwdin charges, Hansen solubility parameters, Ra distance, VLE flash,
+  k-points, surface slabs, adsorption sites, Lipinski's Rule of Five,
+  tautomers, standardization, MD ensembles, radius of gyration, RDF, MSD,
+  imaginary frequencies, spin multiplicity, charge state).
+- New `modules/advisor_tools.py` with two tools and four MCP prompts:
+  - `explain_concept(concept)`: looks up one concept, or lists all available
+    keys when called with an empty string.
+  - `recommend_workflow(goal, molecule_id=None)`: deterministic
+    keyword-matched tool chains (e.g. "activation barrier" ->
+    build_molecule_from_smiles -> run_scientific_preflight ->
+    optimize_geometry -> run_neb_calculation -> calculate_vibrations) with a
+    rationale and caveats per chain; when `molecule_id` is given, tailors the
+    top recommendation with a caveat suggesting xTB/MLFF over DFT for
+    molecules whose estimated DFT/STO-3G runtime is slow (reusing the
+    existing `estimate_calculation_time` heuristic).
+  - MCP prompts `compute_reaction_barrier`, `characterize_a_molecule`,
+    `screen_solvent_compatibility`, `simulate_polymer_properties` - guided,
+    parameterized multi-step workflow instructions for a client LLM,
+    modeled on statistician-mcp's `advisor.py`.
+- `pyyaml` added as an explicit core dependency (was previously an
+  undeclared transitive dependency - the concepts loader now genuinely
+  needs it at runtime).
+
+### Fixed
+- Found (not fixed - out of scope for this phase, flagged as a follow-up)
+  a pre-existing bug while writing this phase's tests: building a molecule
+  from a pathologically long linear SMILES chain (e.g. 60 carbons) crashes
+  `build_molecule_from_smiles_engine`'s random-coordinate embedding fallback
+  with a raw `Boost.Python.ArgumentError` instead of embedding or failing
+  cleanly.
+
 ## [Unreleased] - Phase 5: packaging, docs, CI hygiene
 
 ### Added

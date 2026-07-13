@@ -1,0 +1,407 @@
+basis_set:
+  title: Basis set
+  explanation: >
+    A finite set of mathematical functions (usually Gaussians centered on atoms)
+    used to approximate the molecular orbitals in a QM calculation. Larger, more
+    diverse basis sets (e.g. going from STO-3G to 6-31G* to cc-pVTZ) describe the
+    electron density more accurately but cost much more compute, formally scaling
+    as a high power of the number of basis functions. STO-3G is a minimal basis
+    useful only for quick qualitative checks; 6-31G* (adds polarization functions)
+    is a reasonable default for organic molecules; larger correlation-consistent
+    sets (cc-pVDZ/cc-pVTZ) are needed for quantitatively reliable energies. Basis
+    set incompleteness is a systematic error source distinct from the choice of
+    method/functional - always report which basis was used alongside the
+    functional, since results are meaningless without both.
+
+dft_functional_choice:
+  title: Choosing a DFT functional
+  explanation: >
+    Density Functional Theory approximates the exchange-correlation energy with
+    one of many functionals, and the choice affects accuracy for a given
+    property. B3LYP is a common general-purpose hybrid GGA functional, a
+    reasonable default for organic thermochemistry and geometries but known to
+    underestimate reaction barriers and struggle with dispersion (van der Waals)
+    interactions unless a dispersion correction (e.g. -D3) is added. wB97X-D or
+    M06-2X are better choices for barrier heights and non-covalent interactions.
+    No single functional is best for everything - functional choice is itself a
+    source of error that should be reported, and results from different
+    functionals shouldn't be directly compared without acknowledging this.
+
+hf_vs_dft:
+  title: Hartree-Fock vs. DFT
+  explanation: >
+    Hartree-Fock (HF) treats electron-electron repulsion in a mean-field way and
+    completely neglects electron correlation, making it fast but systematically
+    inaccurate for energetics (errors of tens of kcal/mol are common). DFT adds
+    an approximate correlation treatment via the exchange-correlation functional
+    at similar computational cost to HF, so it's almost always preferred for
+    chemically meaningful energies, geometries, and vibrational frequencies. HF
+    is mainly useful as a quick sanity check, a starting point for post-HF
+    correlated methods (MP2, CCSD(T)), or when only a fast qualitative electronic
+    structure is needed. For any calculation where the energy value itself
+    matters, use DFT (or better) rather than bare HF.
+
+gfn2_vs_dft:
+  title: GFN2-xTB vs. DFT
+  explanation: >
+    GFN2-xTB is a semi-empirical tight-binding method that is orders of
+    magnitude faster than DFT (seconds vs. minutes-to-hours) by using
+    approximate, parameterized electron integrals instead of computing them from
+    first principles. It's well-suited for conformer searches, quick geometry
+    pre-optimization, large systems (100s of atoms), and screening many
+    candidates cheaply before committing to expensive DFT on the most promising
+    ones. Its energies and geometries are good but not benchmark-quality - don't
+    trust absolute reaction energies or barrier heights from GFN2-xTB alone for
+    anything requiring chemical accuracy; use it to narrow down candidates, then
+    refine the final answer with DFT or higher.
+
+when_to_trust_mlff:
+  title: When to trust a machine-learned force field (MLFF)
+  explanation: >
+    Machine-learned interatomic potentials (CHGNet, MACE) are trained on DFT
+    data and can be fast and reasonably accurate for structures similar to their
+    training distribution (common organic/inorganic chemistries, ambient
+    conditions). They become unreliable for chemistry far outside that
+    distribution: unusual oxidation states, exotic elements/bonding, extreme
+    pressure/temperature, transition states, or reactive bond-breaking/forming
+    events the model never saw. Always treat MLFF results as a fast
+    screening/pre-optimization step, and validate any scientifically important
+    number (a final energy, a reported barrier) against a DFT or ab initio
+    calculation before relying on it, especially for anything unusual.
+
+zero_point_energy:
+  title: Zero-point energy (ZPE)
+  explanation: >
+    Even at absolute zero, a quantum harmonic oscillator retains vibrational
+    energy - the zero-point energy, computed as half the sum of all vibrational
+    mode frequencies (ZPE = 0.5 * sum(h*nu_i)). It must be added to the raw
+    electronic energy to get a physically meaningful 0 K energy, and is required
+    before comparing to any experimental thermochemistry (bond energies,
+    reaction enthalpies). ZPE differences between reactants/products/transition
+    states can shift computed barriers or reaction energies by several kcal/mol,
+    so never compare bare electronic energies across a reaction path - always
+    include ZPE (and ideally full thermal corrections) first.
+
+gibbs_thermochemistry:
+  title: Gibbs free energy from vibrational thermochemistry
+  explanation: >
+    The Gibbs free energy G = H - TS is built from the electronic energy plus
+    vibrational, rotational, and translational contributions to enthalpy (H) and
+    entropy (S), computed from a harmonic-oscillator/rigid-rotor analysis of the
+    vibrational frequencies at a given temperature and pressure. This is what
+    should be compared to experimental equilibrium constants, reaction
+    spontaneity (deltaG), or relative conformer populations - not the raw
+    electronic energy. A structure must be a genuine energy minimum (all real
+    vibrational frequencies) for this analysis to be valid; running it on an
+    unconverged or saddle-point structure gives meaningless results.
+
+conformer_ensembles:
+  title: Conformer ensembles
+  explanation: >
+    Most flexible molecules exist as a Boltzmann-weighted mixture of multiple 3D
+    conformers (different rotatable-bond arrangements) at any real temperature,
+    not a single rigid structure. Any property that depends on 3D shape
+    (solubility, spectra, binding, thermochemistry) should be computed as a
+    population-weighted average over a representative conformer ensemble, not
+    from one arbitrarily chosen structure - a single conformer can give a
+    systematically biased answer, especially for flexible chains. Generate the
+    ensemble with a fast conformer search (RDKit ETKDG or GFN2-xTB/CREST), then
+    optimize and weight each member (see boltzmann_weighting) before reporting
+    any ensemble-averaged property.
+
+boltzmann_weighting:
+  title: Boltzmann weighting of conformers
+  explanation: >
+    Given a set of optimized conformers with relative energies deltaE_i, each
+    conformer's population at temperature T is weighted by exp(-deltaE_i / kT),
+    normalized across the ensemble - lower-energy conformers dominate, but
+    higher-energy ones still contribute meaningfully if deltaE is only a few kT
+    (roughly 0.6 kcal/mol at room temperature). Any ensemble-averaged property
+    (energy, dipole, spectrum) should be this weighted average, not a simple
+    unweighted mean or the lowest-energy structure alone, especially when
+    several conformers lie within 2-3 kcal/mol of the global minimum - excluding
+    them silently introduces real error.
+
+transition_state:
+  title: Transition state (TS)
+  explanation: >
+    A transition state is a first-order saddle point on the potential energy
+    surface - a maximum along the reaction coordinate but a minimum in every
+    other direction - connecting reactants to products. It's characterized by
+    exactly one imaginary (negative) vibrational frequency, whose normal mode
+    corresponds to the bond-breaking/forming motion of the reaction. Confirming
+    a structure is a genuine TS (not just an energy maximum found by chance)
+    requires a vibrational frequency calculation showing exactly one imaginary
+    frequency; zero imaginary frequencies means it's actually a minimum, and more
+    than one means it's a higher-order saddle point, not a valid reaction TS.
+
+neb_method:
+  title: Nudged Elastic Band (NEB)
+  explanation: >
+    NEB locates a transition state and the full minimum-energy reaction path
+    when you know the reactant and product structures but not the TS itself. It
+    interpolates a chain of intermediate "images" between the two endpoints and
+    relaxes them under a combination of the true potential and an artificial
+    spring force along the path, pulling the chain onto the lowest-energy
+    connecting route. The highest-energy image approximates the TS and can be
+    refined further with a dedicated saddle-point optimizer. NEB needs reasonable
+    endpoint structures and enough images to resolve the path's curvature - too
+    few images can miss the true barrier or converge to the wrong path.
+
+activation_barrier:
+  title: Activation barrier
+  explanation: >
+    The activation barrier (Ea) is the free-energy (or electronic-energy)
+    difference between the transition state and the reactant, and it directly
+    controls reaction rate via the Arrhenius/Eyring relationship - even a few
+    kcal/mol of error in the barrier changes the predicted rate by orders of
+    magnitude at room temperature, since the rate depends exponentially on
+    -Ea/RT. Reporting a barrier as a bare electronic energy difference without
+    ZPE and thermal corrections (see gibbs_thermochemistry) is a common and
+    significant source of error. Always confirm the TS is genuine (one imaginary
+    frequency) before trusting any barrier computed from it.
+
+homo_lumo_gap:
+  title: HOMO-LUMO gap
+  explanation: >
+    The energy gap between the Highest Occupied Molecular Orbital (HOMO) and
+    Lowest Unoccupied Molecular Orbital (LUMO) is a rough proxy for a molecule's
+    chemical reactivity and optical excitation energy - a small gap suggests
+    high reactivity, low chemical hardness, and absorption/emission in the
+    visible-to-near-UV range, while a large gap suggests a more inert, wide-gap
+    system. It's a qualitative screening tool, not a quantitative prediction:
+    real excitation energies require an explicit excited-state method (TD-DFT),
+    and the gap itself is sensitive to the functional/basis set used, so only
+    compare HOMO-LUMO gaps computed at the same level of theory.
+
+mulliken_vs_loewdin:
+  title: Mulliken vs. Löwdin atomic charges
+  explanation: >
+    Both are ways to partition a molecule's electron density into per-atom
+    "partial charges" from the wavefunction, but by different mathematical
+    schemes (Mulliken uses the raw overlap-weighted population; Löwdin
+    symmetrically orthogonalizes the basis first). Neither corresponds to a
+    physically observable quantity - they're basis-set-dependent bookkeeping
+    conventions, and Mulliken charges in particular are notoriously sensitive to
+    (and can become unphysical with) large/diffuse basis sets. Use them for
+    qualitative trends (which atom is more electron-rich) within a consistent
+    method/basis, not as absolute values, and don't compare charges computed
+    with different methods or basis sets directly.
+
+hansen_solubility:
+  title: Hansen solubility parameters (HSP)
+  explanation: >
+    HSP decompose a substance's cohesive energy into three components -
+    dispersion (delta_d, van der Waals forces), polar (delta_p, dipole-dipole
+    interactions), and hydrogen-bonding (delta_h) - each with units of
+    (energy/volume)^0.5, typically MPa^0.5. Two substances with similar HSP
+    values in all three dimensions tend to be miscible/soluble in each other,
+    since "like dissolves like" expressed quantitatively. HSP are estimated here
+    via the Hoftyzer-Van Krevelen group-contribution method, which sums
+    empirical group increments over the molecule's structure - fast but
+    approximate, especially for unusual functional groups not well represented
+    in the parameterization.
+
+ra_distance:
+  title: Hansen solubility distance (Ra)
+  explanation: >
+    Ra is the distance between two substances' HSP vectors:
+    Ra^2 = 4*(delta_d1-delta_d2)^2 + (delta_p1-delta_p2)^2 + (delta_h1-delta_h2)^2
+    (the factor of 4 on the dispersion term accounts for its different physical
+    scaling). A smaller Ra indicates greater predicted compatibility/miscibility/
+    solubility between the two substances; Ra values below roughly the solvent's
+    "interaction radius" (when known) suggest good solubility, while larger Ra
+    suggests poor compatibility. This is a fast screening heuristic for solvent
+    selection or polymer-solvent/polymer-polymer compatibility, not a
+    replacement for measuring actual solubility when a real decision is on the
+    line.
+
+vle_flash:
+  title: Vapor-liquid equilibrium (VLE) flash
+  explanation: >
+    A "flash" calculation determines how a mixture at a given temperature,
+    pressure, and overall composition splits into coexisting vapor and liquid
+    phases at equilibrium - the vapor and liquid compositions, and the fraction
+    of each phase, calculated so each component's chemical potential (fugacity)
+    matches across both phases. This underlies boiling point prediction,
+    distillation design, and azeotrope detection. Results depend on the equation
+    of state or activity-coefficient model used and are only as good as that
+    model's parameterization for the specific mixture - always sanity-check
+    flash results against any known experimental boiling points or azeotrope
+    compositions for the system.
+
+k_points:
+  title: k-point sampling
+  explanation: >
+    Periodic (crystal/surface) DFT calculations sample the electronic structure
+    across the Brillouin zone using a discrete grid of k-points rather than a
+    single point, because a periodic solid's bands vary continuously with
+    crystal momentum. Too few k-points gives inaccurate energies/forces
+    (especially for metals, where the Fermi surface must be resolved); more
+    k-points converges the result but costs proportionally more compute. A
+    reasonable starting grid depends on the unit cell size (larger cells need
+    fewer k-points, since real- and reciprocal-space resolution are inversely
+    related) - always check that a computed property is converged with respect
+    to k-point density before trusting it.
+
+surface_slabs:
+  title: Surface slab models
+  explanation: >
+    A slab model represents an infinite crystal surface by periodically
+    repeating a finite-thickness cut of the bulk structure with vacuum above it,
+    so surface phenomena (adsorption, catalysis, reconstruction) can be studied
+    with periodic DFT. Slabs must be thick enough that the bottom layers behave
+    like bulk (not artificially perturbed by the surface), and the vacuum gap
+    must be large enough to prevent spurious interaction between periodic images
+    across the vacuum - both are convergence parameters to check, not arbitrary
+    choices. The exposed crystal face (Miller index) strongly affects surface
+    chemistry, so results for one facet don't generalize to others.
+
+adsorption_sites:
+  title: Adsorption sites
+  explanation: >
+    When a molecule binds to a surface, it can sit at geometrically distinct
+    sites - atop (directly over one surface atom), bridge (between two atoms),
+    or hollow (centered over three or more) - each with different coordination
+    and typically different binding energy. The most stable site isn't always
+    obvious from geometry alone and can depend on the adsorbate's electronic
+    structure and coverage; a proper study samples multiple candidate sites and
+    orientations rather than assuming one, since picking only the "obvious" site
+    risks reporting a binding energy that isn't actually the global minimum for
+    that adsorbate-surface pair.
+
+lipinski_rule_of_five:
+  title: Lipinski's Rule of Five
+  explanation: >
+    A quick, informal screen for whether a molecule is likely "drug-like"
+    (orally bioavailable): no more than 5 hydrogen-bond donors, no more than 10
+    hydrogen-bond acceptors, molecular weight under 500 Da, and calculated logP
+    under 5. Violating one criterion is often tolerated; violating two or more
+    flags a molecule as a poorer bet for oral bioavailability, though there are
+    well-known exceptions (many natural products and macrocycles). It's a cheap
+    heuristic filter for early-stage screening, not a rigorous predictor of
+    actual pharmacokinetics - use it to prioritize/deprioritize candidates, not
+    as a hard accept/reject gate.
+
+tautomers:
+  title: Tautomers
+  explanation: >
+    Tautomers are constitutional isomers that interconvert rapidly via migration
+    of a proton (and a shift of adjacent double bonds), such as keto-enol forms
+    or the different protonation patterns of a heterocycle - they're different
+    molecular graphs, not conformers of the same graph. Which tautomer dominates
+    depends on solvent, pH, and the surrounding environment, and different
+    tautomers can have very different reactivity, spectra, and even different
+    apparent 3D shape for downstream calculations. Enumerating plausible
+    tautomers before a serious calculation (rather than assuming the input
+    SMILES already represents the dominant form) avoids computing properties
+    for the wrong species entirely.
+
+standardization:
+  title: Molecule standardization
+  explanation: >
+    Standardization normalizes a molecular structure to a canonical, consistent
+    representation before any calculation: choosing a canonical tautomer,
+    neutralizing salts/counterions unless they're the object of study,
+    normalizing charges, and canonicalizing stereochemistry and aromaticity
+    perception. The same real molecule can arrive as many different (but
+    chemically equivalent) SMILES/structures from different sources, and
+    skipping standardization risks silently computing properties for a
+    different protonation state, salt form, or tautomer than intended - always
+    standardize input structures before descriptor calculation, especially when
+    the molecule comes from an external database or user-typed SMILES.
+
+md_ensembles:
+  title: MD ensembles (NVE vs. NVT)
+  explanation: >
+    Molecular dynamics simulations sample a specific statistical ensemble
+    depending on what's held constant: NVE (microcanonical - constant number of
+    particles, volume, and total energy, no thermostat) conserves energy exactly
+    and is the right choice for checking energy conservation/integrator
+    correctness, while NVT (canonical - constant particles, volume, and
+    temperature, via a thermostat like Langevin or Nose-Hoover) is the right
+    choice for sampling structures/properties at a realistic, controlled
+    temperature. Using NVE when you actually want a fixed physical temperature
+    (or vice versa) silently changes what's being sampled and can bias any
+    derived thermodynamic property - always match the ensemble to the actual
+    physical question being asked.
+
+radius_of_gyration:
+  title: Radius of gyration (Rg)
+  explanation: >
+    Rg is the root-mean-square distance of all atoms (or beads) in a molecule
+    from its center of mass, mass-weighted - a single scalar measuring how
+    compact or extended a structure is. It's a standard metric for polymer
+    chain conformation (a collapsed globule has small Rg; an extended/swollen
+    chain has large Rg) and is tracked over an MD trajectory to see whether a
+    polymer chain is equilibrating toward a stable size or still relaxing. A
+    trajectory with Rg still drifting (not fluctuating around a stable mean)
+    hasn't reached equilibrium yet, and properties measured from it aren't
+    representative of the true equilibrium ensemble.
+
+rdf:
+  title: Radial distribution function (RDF), g(r)
+  explanation: >
+    The RDF g(r) describes how atomic/molecular density varies as a function of
+    distance r from a reference particle, relative to the average bulk density -
+    peaks indicate preferred neighbor distances (e.g. the first solvation shell
+    in a liquid, or nearest-neighbor spacing in a solid), and g(r) approaching 1
+    at large r indicates the structure becomes uncorrelated (bulk-like) far
+    away. It's computed by averaging pairwise distances over an equilibrated MD
+    trajectory (not a single snapshot, which is too noisy) and is a standard way
+    to characterize local structure/packing in liquids, amorphous polymers, and
+    packed cells.
+
+msd:
+  title: Mean squared displacement (MSD)
+  explanation: >
+    MSD tracks how far particles have moved, on average, from their starting
+    positions as a function of simulation time - averaged over all tracked
+    particles (and often over multiple time origins). Its slope in the
+    diffusive (long-time, linear) regime is directly related to the
+    self-diffusion coefficient via the Einstein relation. MSD analysis requires
+    the system to already be equilibrated (otherwise the early transient
+    reflects relaxation, not diffusion) and enough trajectory length to reach
+    the linear regime - a curved/sub-linear MSD usually means the run is too
+    short or the system hasn't equilibrated, not that diffusion is anomalous.
+
+imaginary_frequencies:
+  title: Imaginary (negative) vibrational frequencies
+  explanation: >
+    An imaginary frequency arises when the second derivative of the energy along
+    a normal mode is negative - the structure is a maximum, not a minimum, along
+    that direction on the potential energy surface. Zero imaginary frequencies
+    confirms a genuine local minimum (a stable structure, valid for
+    thermochemistry). Exactly one imaginary frequency, whose mode corresponds to
+    the expected reaction coordinate, confirms a genuine transition state (see
+    transition_state). Any other count - one imaginary frequency on a structure
+    meant to be a minimum, or two-plus on a claimed TS - means the optimization
+    converged to the wrong kind of stationary point and should not be trusted
+    for thermochemistry or barriers.
+
+spin_multiplicity:
+  title: Spin multiplicity
+  explanation: >
+    Spin multiplicity (2S+1, where S is total electron spin) specifies how many
+    unpaired electrons a species has: multiplicity 1 (singlet) means all
+    electrons are paired, common for closed-shell organic molecules;
+    multiplicity 2 (doublet) means one unpaired electron, as in most radicals
+    and many transition-metal complexes; multiplicity 3 (triplet) means two
+    unpaired electrons, as in molecular oxygen's ground state or many carbenes.
+    Getting this wrong for a calculation (e.g. running a radical as a
+    closed-shell singlet) gives a qualitatively wrong electronic structure and
+    energy - always set multiplicity to match the actual number of unpaired
+    electrons in the species being studied, not just the default.
+
+charge_state:
+  title: Molecular charge state
+  explanation: >
+    The net charge on a species (0 for a neutral molecule, +1/-1 for a
+    cation/anion, etc.) must be specified correctly for any QM calculation,
+    since it directly determines the number of electrons and therefore the
+    entire electronic structure. A protonated or deprotonated form of a molecule
+    (e.g. an acid at physiological pH) is a genuinely different species from its
+    neutral form with different geometry, spectra, and reactivity - not just a
+    minor variant - so charge state should be chosen deliberately to match the
+    actual protonation state relevant to the question being asked, especially
+    for molecules with acidic/basic functional groups.

@@ -48,7 +48,8 @@ def ping() -> str:
 # a naive syntactic check, silently breaking every tool except the one
 # defined directly above (see CHANGELOG.md, Phase 5). The lint suppression
 # comments on each line below are load-bearing, not decorative.
-from ypotheto_compchem_mcp.modules import builder_tools  # noqa: F401,E402,I001
+from ypotheto_compchem_mcp.modules import advisor_tools  # noqa: F401,E402,I001
+from ypotheto_compchem_mcp.modules import builder_tools  # noqa: F401,E402
 from ypotheto_compchem_mcp.modules import cheminformatics_tools  # noqa: F401,E402
 from ypotheto_compchem_mcp.modules import dynamics_tools  # noqa: F401,E402
 from ypotheto_compchem_mcp.modules import ensemble_tools  # noqa: F401,E402

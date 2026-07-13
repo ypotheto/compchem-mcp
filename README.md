@@ -18,6 +18,7 @@ Powered by **RDKit**, **PySCF**, **Atomic Simulation Environment (ASE)**, **Sell
 *   **Transition States & Reaction Pathways**: Find first-order saddle-points (transition states) using the Sella optimizer. Trace minimum energy pathways (MEP) and activation barriers ($\Delta E^{\ddagger}$) using Nudged Elastic Band (NEB).
 *   **Periodic DFT & Adsorption**: Construct surface slabs with custom Miller indices and vacuum spaces. Add molecular adsorbates onto surface sites (ontop, bridge, hollow) and run periodic calculations (PBC DFT or xTB).
 *   **Machine Learning Force Fields (MLFF)**: Run fast geometry optimizations and molecular dynamics simulations using pre-trained neural network potentials (CHGNet, MACE).
+*   **Advisor & Guidance Layer**: `recommend_workflow` chains the right tools together for a plain-language goal (e.g. "find the activation barrier"), tailored to a molecule's size; `explain_concept` looks up 30+ plain-language explanations of core concepts (basis sets, GFN2 vs. DFT, HSP, imaginary frequencies, etc.); guided MCP prompts (`compute_reaction_barrier`, `characterize_a_molecule`, `screen_solvent_compatibility`, `simulate_polymer_properties`) walk a client LLM through common multi-step workflows end-to-end.
 *   **Asynchronous Job Management**: Heavy computations run in background threads using a persistent job manager, avoiding client/LLM timeout issues.
 *   **File-First Artifacts**: Visual plots, SVG diagrams, and coordinate files (SDF, XYZ, CIF, PDB) are written to a local workspace directory and returned as public URLs.
 
@@ -193,6 +194,7 @@ are added or removed, so this table can't silently drift out of sync again.
 | `calculate_vibrations` | `molecule_id`, `method`, `functional`, ... | Run vibrational frequency analysis and calculate thermochemistry corrections. |
 | `enumerate_tautomers` | `molecule_id` | Enumerate all tautomeric forms for a stored molecule. |
 | `estimate_calculation_time` | `molecule_id`, `method`, `basis` | Estimate the execution time for a quantum chemistry calculation before running it. |
+| `explain_concept` | `concept` | Look up a short, plain-language explanation of a core computational chemistry concept (basis sets, DFT functionals, transition states, HSP, etc.); call with an empty string to list all available concepts. |
 | `generate_supercell` | `molecule_id`, `sc_matrix`, `name` | Expand a unit cell periodic structure into a supercell. |
 | `get_3d_coordinates` | `molecule_id`, `format` | Retrieve coordinate contents (SDF, XYZ, or PDB) of a stored molecule. |
 | `get_job_status` | `job_id` | Check progress or fetch results of a background calculation job. |
@@ -200,6 +202,7 @@ are added or removed, so this table can't silently drift out of sync again.
 | `optimize_geometry` | `molecule_id`, `method`, `functional`, ... | Relax molecule coordinates using ASE LBFGS optimizer coupled with PySCF energy/gradients. |
 | `pack_amorphous_cell` | `molecule_ids`, `counts`, `density_g_cm3`, ... | Pack polymer chains and solvent molecules into a periodic box using Packmol. |
 | `ping` | None | Check if the Ypotheto Computational Chemistry MCP Server is responsive. |
+| `recommend_workflow` | `goal`, `molecule_id` | Recommend a chain of tool calls for a described computational-chemistry goal, with rationale for each step (deterministic keyword rules, not an LLM call); tailors to a molecule's size when `molecule_id` is given. |
 | `register_monomer` | `smiles`, `name`, `head_idx`, ... | Register a monomer repeat unit, defining attachment connection points for polymer building. |
 | `run_conformer_search` | `molecule_id`, `method`, `solvent`, ... | Generate conformer ensembles using CREST (Conformer-Rotamer Ensemble Sampling Tool). |
 | `run_ensemble_thermochemistry` | `molecule_id`, `method`, `solvent`, ... | Run the Ensemble Thermochemistry Pipeline (enumerate -> optimize -> frequency-check -> Boltzmann rank). |
