@@ -1,11 +1,11 @@
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
-from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.chemistry.mlff_engine import (
+    run_mlff_molecular_dynamics_engine,
     run_mlff_optimization_engine,
-    run_mlff_molecular_dynamics_engine
 )
+from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 @mcp.tool()
 @mcp_tool_decorator

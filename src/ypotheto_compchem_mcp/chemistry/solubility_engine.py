@@ -1,9 +1,9 @@
 import logging
-import numpy as np
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
+import numpy as np
 from rdkit import Chem
-from ypotheto_compchem_mcp.workspace import workspace_manager
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ HVK_ORDER = [
 def calculate_hsp_engine(
     workspace_id: str,
     molecule_id: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Calculate Hansen Solubility Parameters (HSP) and Cohesive Energy Density (CED)
     using the Hoftyzer-Van Krevelen (HVK) group contribution method.
@@ -179,7 +179,7 @@ def calculate_hsp_distance_engine(
     workspace_id: str,
     molecule_id_1: str,
     molecule_id_2: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Calculate the Hansen Solubility Parameter (HSP) distance (Ra) between two molecules.
     A smaller distance Ra suggests higher miscibility or solubility.

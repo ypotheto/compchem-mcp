@@ -1,22 +1,33 @@
 import pytest
+
 from ypotheto_compchem_mcp.config import settings
 from ypotheto_compchem_mcp.storage import storage
 from ypotheto_compchem_mcp.workspace import workspace_manager
 
+
 @pytest.fixture(scope="session", autouse=True)
 def disable_db_for_tests():
-    """Disable PostgreSQL database connection and Spaces bucket for standard test runs to prevent test delays, mock incompatibilities, and production pollution."""
+    """Disable PostgreSQL database connection, Spaces bucket, and API token auth
+    for standard test runs to prevent test delays, mock incompatibilities, and
+    production pollution. A real .env with live DB/Spaces credentials and a real
+    shared secret sits in the working tree - without this, tests would silently
+    inherit it (statistician-mcp had tests hit production credentials this way).
+    Individual tests are still free to set settings.api_token etc. themselves
+    for the duration of one test; this only fixes the baseline they start from."""
     original_url = settings.database_url
     original_bucket = settings.spaces_bucket
+    original_token = settings.api_token
 
     settings.database_url = ""
     settings.spaces_bucket = None
+    settings.api_token = ""
     storage.reset()
 
     yield
 
     settings.database_url = original_url
     settings.spaces_bucket = original_bucket
+    settings.api_token = original_token
     storage.reset()
 
 @pytest.fixture(scope="session", autouse=True)

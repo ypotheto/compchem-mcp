@@ -1,19 +1,27 @@
 import io
 import shutil
-import logging
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
-import numpy as np
-from ypotheto_compchem_mcp.utils import plotting as _plotting  # noqa: F401  (import sets the Agg backend before pyplot is touched)
 import matplotlib.pyplot as plt
+import numpy as np
 from ase import Atoms
-from ase.vibrations import Vibrations
 from ase.thermochemistry import IdealGasThermo
+from ase.vibrations import Vibrations
 
-from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace, save_molecule_coords
-from ypotheto_compchem_mcp.chemistry.qm_engine import PySCFCalculator, RDKitCalculator, PYSCF_AVAILABLE, HARTREE_TO_EV
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    load_molecule_from_workspace,
+)
+from ypotheto_compchem_mcp.chemistry.qm_engine import (
+    PYSCF_AVAILABLE,
+    PySCFCalculator,
+    RDKitCalculator,
+)
+from ypotheto_compchem_mcp.utils import (
+    plotting as _plotting,  # noqa: F401  (import sets the Agg backend before pyplot is touched)
+)
 from ypotheto_compchem_mcp.workspace import workspace_manager
+
 
 def run_vibrations_engine(
     workspace_id: str,
@@ -23,8 +31,8 @@ def run_vibrations_engine(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    progress_callback: Optional[Callable[[str], None]] = None
-) -> Dict[str, Any]:
+    progress_callback: Callable[[str], None] | None = None
+) -> dict[str, Any]:
     """
     Perform vibrational harmonic analysis, yielding frequencies and ZPE.
     """
@@ -132,7 +140,10 @@ def run_vibrations_engine(
                 "gibbs_free_energy_ev": gibbs_corr
             }
         },
-        "warnings": [{"type": "IMAGINARY_MODES", "message": f"Found {imag_modes_count} imaginary vibrational modes. Structure may not be a true minimum."}] if imag_modes_count > 0 else []
+        "warnings": [{
+            "type": "IMAGINARY_MODES",
+            "message": f"Found {imag_modes_count} imaginary vibrational modes. Structure may not be a true minimum."
+        }] if imag_modes_count > 0 else []
     }
 
 
@@ -144,8 +155,8 @@ def simulate_ir_spectrum_engine(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    progress_callback: Optional[Callable[[str], None]] = None
-) -> Dict[str, Any]:
+    progress_callback: Callable[[str], None] | None = None
+) -> dict[str, Any]:
     """
     Simulate IR intensities and generate a Lorentzian IR spectrum plot.
     """
@@ -188,7 +199,10 @@ def simulate_ir_spectrum_engine(
         ir.run()
         frequencies = ir.get_frequencies()
         intensities = np.array([1.0] * len(frequencies))
-        warnings = [{"type": "FORCEFIELD_IR", "message": "Forcefield methods do not yield charge dipole derivatives. All IR intensities are mocked as 1.0."}]
+        warnings = [{
+            "type": "FORCEFIELD_IR",
+            "message": "Forcefield methods do not yield charge dipole derivatives. All IR intensities are mocked as 1.0."
+        }]
     else:
         from ase.vibrations import Infrared
         ir = Infrared(atoms, name=str(vib_dir / "ir"))
@@ -200,7 +214,7 @@ def simulate_ir_spectrum_engine(
     # Clean lists
     freqs_clean = []
     ints_clean = []
-    for f, intens in zip(frequencies, intensities):
+    for f, intens in zip(frequencies, intensities, strict=True):
         if isinstance(f, complex):
             freq_val = f.real if f.imag == 0 else -f.imag
         else:
@@ -213,7 +227,7 @@ def simulate_ir_spectrum_engine(
     y = np.zeros_like(x)
     gamma = 15.0  # Lorentzian broadening factor HWHM
     
-    for f_val, intens in zip(freqs_clean, ints_clean):
+    for f_val, intens in zip(freqs_clean, ints_clean, strict=True):
         # Only plot real positive frequencies (exclude translation/rotation modes)
         if f_val > 10.0:
             y += intens * (gamma**2) / ((x - f_val)**2 + gamma**2)

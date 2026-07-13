@@ -1,5 +1,11 @@
 import matplotlib
-from ypotheto_compchem_mcp.utils.plotting import new_figure, new_3d_figure, render_png, close_all_open_figures
+
+from ypotheto_compchem_mcp.utils.plotting import (
+    close_all_open_figures,
+    new_3d_figure,
+    new_figure,
+    render_png,
+)
 
 
 def test_agg_backend_is_set():

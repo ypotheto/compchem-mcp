@@ -1,12 +1,13 @@
 import json
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
 from ypotheto_compchem_mcp.chemistry.qm_engine import run_pyscf_properties_engine
 from ypotheto_compchem_mcp.errors import CalculationFailedError
 from ypotheto_compchem_mcp.modules.quantum_tools import run_pyscf_properties
-from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
+from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
 @patch("ypotheto_compchem_mcp.chemistry.qm_engine.PYSCF_AVAILABLE", True)

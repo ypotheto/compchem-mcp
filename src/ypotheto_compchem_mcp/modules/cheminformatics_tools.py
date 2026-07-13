@@ -1,9 +1,10 @@
 import json
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.descriptors import calculate_descriptors_engine
+from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.server import mcp
+
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -52,7 +53,7 @@ def standardize_molecule(
     strip_salts: bool = True,
     neutralize: bool = True,
     canonicalize_tautomer: bool = True,
-    name: Optional[str] = None
+    name: str | None = None
 ) -> dict:
     """
     Standardize a molecule: parses structure, strips salts, neutralizes formal charge,
@@ -65,8 +66,8 @@ def standardize_molecule(
     - canonicalize_tautomer: If True, standardizes to the canonical tautomer (default True).
     - name: Optional name for the standardized molecule.
     """
-    from ypotheto_compchem_mcp.workspace import get_workspace_id
     from ypotheto_compchem_mcp.chemistry.standardizer import standardize_molecule_engine
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
     
     workspace_id = get_workspace_id()
     res = standardize_molecule_engine(
@@ -112,8 +113,8 @@ def enumerate_tautomers(
     Parameters:
     - molecule_id: The stored molecule handle.
     """
-    from ypotheto_compchem_mcp.workspace import get_workspace_id
     from ypotheto_compchem_mcp.chemistry.standardizer import enumerate_tautomers_engine
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
     
     workspace_id = get_workspace_id()
     res = enumerate_tautomers_engine(workspace_id, molecule_id)
@@ -145,8 +146,8 @@ def search_conformers(
     - num_conformers: Maximum number of conformers to embed initially (default 50).
     - rmsd_threshold: RMSD threshold in Angstroms for pruning duplicates (default 0.5 Å).
     """
-    from ypotheto_compchem_mcp.workspace import get_workspace_id
     from ypotheto_compchem_mcp.chemistry.conformer_engine import search_conformers_engine
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
     
     workspace_id = get_workspace_id()
     res = search_conformers_engine(workspace_id, molecule_id, num_conformers, rmsd_threshold)
@@ -168,7 +169,7 @@ def search_conformers(
 def save_conformer_as_molecule(
     parent_molecule_id: str,
     rdkit_conformer_id: int,
-    name: Optional[str] = None
+    name: str | None = None
 ) -> dict:
     """
     Extract a single conformer from a search result and save it as a new molecule in the workspace.
@@ -178,8 +179,8 @@ def save_conformer_as_molecule(
     - rdkit_conformer_id: The internal RDKit conformer ID to extract.
     - name: Optional label for the resulting molecule.
     """
-    from ypotheto_compchem_mcp.workspace import get_workspace_id
     from ypotheto_compchem_mcp.chemistry.conformer_engine import save_conformer_as_molecule_engine
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
     
     workspace_id = get_workspace_id()
     res = save_conformer_as_molecule_engine(workspace_id, parent_molecule_id, rdkit_conformer_id, name)

@@ -1,17 +1,19 @@
 import sys
 import types
-import pytest
 from unittest.mock import patch
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
+
+import pytest
+
 from ypotheto_compchem_mcp.chemistry.kinetics_engine import (
+    run_neb_calculation_engine,
     run_transition_state_search_engine,
-    run_neb_calculation_engine
 )
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.modules.kinetics_tools import (
+    run_neb_calculation,
     run_transition_state_search,
-    run_neb_calculation
 )
+from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
 def _save_water_and_product():
@@ -20,6 +22,19 @@ def _save_water_and_product():
     mol_xyz = "3\nWater molecule\nO 0.0 0.0 0.0\nH 0.0 0.0 0.9\nH 0.0 0.9 0.0"
     save_molecule_coords(workspace_id, "mol_h2o_ts_guess", "", mol_xyz, {"molecule_id": "mol_h2o_ts_guess", "name": "water"})
     return workspace_id
+
+
+def test_transition_state_search_raises_when_sella_unavailable():
+    # sella has no *_AVAILABLE guard historically (unlike every other optional
+    # backend in this codebase) - a missing install would raise a raw ImportError
+    # deep inside the engine instead of a typed, hinted BackendUnavailableError.
+    workspace_id = _save_water_and_product()
+
+    with patch("ypotheto_compchem_mcp.chemistry.kinetics_engine.SELLA_AVAILABLE", False):
+        with pytest.raises(BackendUnavailableError) as exc:
+            run_transition_state_search_engine(workspace_id, "mol_h2o_ts_guess", method="xTB")
+        assert "sella" in str(exc.value).lower()
+        assert "[ts]" in exc.value.hint
 
 
 def test_transition_state_search_raises_when_xtb_unavailable():

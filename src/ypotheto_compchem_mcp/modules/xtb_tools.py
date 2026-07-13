@@ -1,15 +1,35 @@
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.jobs import job_manager
+
 from ypotheto_compchem_mcp.chemistry.xtb_engine import (
-    run_xtb_calculation_engine,
-    run_conformer_search_engine,
+    CREST_AVAILABLE,
     XTB_AVAILABLE,
-    CREST_AVAILABLE
+    run_conformer_search_engine,
+    run_xtb_calculation_engine,
 )
+from ypotheto_compchem_mcp.envelope import (
+    make_error_response,
+    make_success_response,
+    mcp_tool_decorator,
+)
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
+from ypotheto_compchem_mcp.jobs import job_manager
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
+
+def _finalize_run_conformer_search(res: dict, molecule_id: str, method: str) -> dict:
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"],
+        artifacts=res.get("artifacts", []),
+        meta={
+            "molecule_id": molecule_id,
+            "method": f"CREST/{method}"
+        }
+    )
+
+def run_conformer_search_job(workspace_id, molecule_id, method, solvent, energy_window_kcal):
+    res = run_conformer_search_engine(workspace_id, molecule_id, method, solvent, energy_window_kcal)
+    return _finalize_run_conformer_search(res, molecule_id, method)
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -17,7 +37,7 @@ def run_xtb_calculation(
     molecule_id: str,
     task: str = "single_point",
     method: str = "GFN2-xTB",
-    solvent: Optional[str] = None,
+    solvent: str | None = None,
     charge: int = 0,
     spin: int = 1,
     run_async: bool = False
@@ -99,7 +119,7 @@ def run_xtb_calculation(
 def run_conformer_search(
     molecule_id: str,
     method: str = "GFN2-xTB",
-    solvent: Optional[str] = None,
+    solvent: str | None = None,
     energy_window_kcal: float = 6.0,
     run_async: bool = True
 ) -> dict:
@@ -134,7 +154,7 @@ def run_conformer_search(
     if run_async or est_sec >= 10:
         job = job_manager.submit_job(
             workspace_id,
-            run_conformer_search_engine,
+            run_conformer_search_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -151,14 +171,6 @@ def run_conformer_search(
             },
             interpretation=f"CREST conformer search submitted to background. Job ID: {job.job_id}. Estimate: {est_sec} seconds."
         )
-        
-    res = run_conformer_search_engine(workspace_id, molecule_id, method, solvent, energy_window_kcal)
 
-    return make_success_response(
-        results=res["results"],
-        interpretation=res["interpretation"],
-        meta={
-            "molecule_id": molecule_id,
-            "method": f"CREST/{method}"
-        }
-    )
+    res = run_conformer_search_engine(workspace_id, molecule_id, method, solvent, energy_window_kcal)
+    return _finalize_run_conformer_search(res, molecule_id, method)

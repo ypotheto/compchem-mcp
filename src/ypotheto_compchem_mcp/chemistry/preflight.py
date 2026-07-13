@@ -1,9 +1,9 @@
-import logging
-from typing import Any, Dict, Tuple
-from rdkit import Chem
-from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+from typing import Any
 
-def validate_charge_spin_multiplicity(mol: Chem.Mol, charge: int, spin: int) -> Tuple[bool, str]:
+from rdkit import Chem
+
+
+def validate_charge_spin_multiplicity(mol: Chem.Mol, charge: int, spin: int) -> tuple[bool, str]:
     """
     Validate that the requested charge and spin multiplicity are mathematically consistent.
     Returns (is_valid, error_message).
@@ -49,7 +49,7 @@ def validate_charge_spin_multiplicity(mol: Chem.Mol, charge: int, spin: int) -> 
         
     return True, ""
 
-def validate_basis_set_coverage(mol: Chem.Mol, basis: str) -> Tuple[bool, str]:
+def validate_basis_set_coverage(mol: Chem.Mol, basis: str) -> tuple[bool, str]:
     """
     Validate that all element types in the molecule are supported by the requested basis set.
     Returns (is_valid, error_message).
@@ -124,7 +124,7 @@ def _estimate_basis_functions(mol: Chem.Mol, basis: str) -> int:
                 
     return max(2, total_funcs)
 
-def estimate_computational_resources(mol: Chem.Mol, method: str, basis: str, task: str) -> Dict[str, Any]:
+def estimate_computational_resources(mol: Chem.Mol, method: str, basis: str, task: str) -> dict[str, Any]:
     """
     Estimate computational wall time, memory, disk scratch space, and credit billing cost.
     """

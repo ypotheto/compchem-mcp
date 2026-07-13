@@ -4,8 +4,8 @@ from ypotheto_compchem_mcp.modules.builder_tools import build_molecule_from_smil
 from ypotheto_compchem_mcp.modules.cheminformatics_tools import calculate_descriptors
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
+
 def test_builder_engine():
-    workspace_id = get_workspace_id()
     # Build ethanol
     res = build_molecule_from_smiles_engine("CCO", "Ethanol")
     assert res["molecule_id"].startswith("mol_")

@@ -1,9 +1,12 @@
-from typing import Any, Dict
+from typing import Any
+
 from rdkit import Chem
 from rdkit.Chem import Crippen, rdMolDescriptors
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
 
-def calculate_descriptors_engine(workspace_id: str, molecule_id: str) -> Dict[str, Any]:
+
+def calculate_descriptors_engine(workspace_id: str, molecule_id: str) -> dict[str, Any]:
     """
     Calculate cheminformatics molecular descriptors and filters for a stored molecule.
     """

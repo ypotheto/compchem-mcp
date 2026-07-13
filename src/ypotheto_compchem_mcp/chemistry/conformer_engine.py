@@ -1,19 +1,16 @@
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
-import numpy as np
+from typing import Any
 
+import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
-from ypotheto_compchem_mcp.workspace import workspace_manager
 from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    _get_molecules_dir,
     load_molecule_from_workspace,
     save_molecule_coords,
-    _get_molecules_dir,
-    _load_index,
-    _save_index
 )
 
 logger = logging.getLogger(__name__)
@@ -23,7 +20,7 @@ def search_conformers_engine(
     molecule_id: str,
     num_conformers: int = 50,
     rmsd_threshold: float = 0.5
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate multiple conformers for a stored molecule, minimize them using forcefields,
     remove optimized duplicates, and return a ranked list with Boltzmann populations.
@@ -74,7 +71,7 @@ def search_conformers_engine(
     unique_confs = []
     for cid, energy in confs_energies:
         is_duplicate = False
-        for u_cid, u_energy in unique_confs:
+        for u_cid, _u_energy in unique_confs:
             rmsd = AllChem.GetBestRMS(mol_3d, mol_3d, cid, u_cid)
             if rmsd < rmsd_threshold:
                 is_duplicate = True
@@ -87,7 +84,7 @@ def search_conformers_engine(
     RT = 0.592183  # kcal/mol at 298.15 K
     
     exps = []
-    for cid, energy in unique_confs:
+    for _cid, energy in unique_confs:
         de = energy - lowest_energy
         exps.append(np.exp(-de / RT))
     Z = sum(exps)
@@ -129,8 +126,8 @@ def save_conformer_as_molecule_engine(
     workspace_id: str,
     parent_molecule_id: str,
     rdkit_conformer_id: int,
-    name: Optional[str] = None
-) -> Dict[str, Any]:
+    name: str | None = None
+) -> dict[str, Any]:
     """
     Extract a single conformer from the multi-conformer SDF and save it as a new
     standalone molecule in the workspace.
@@ -153,8 +150,8 @@ def save_conformer_as_molecule_engine(
         raise ValueError(f"Conformer ID {rdkit_conformer_id} not found in multi-conformer file.")
 
     # Save as new molecule
-    from rdkit.Chem.Draw import rdMolDraw2D
     from rdkit.Chem import rdDepictor
+    from rdkit.Chem.Draw import rdMolDraw2D
     
     # Generate 2D depict
     mol_2d = Chem.Mol(target_mol)

@@ -1,14 +1,15 @@
 import json
-from pathlib import Path
-from typing import Any, Dict, Optional
 import uuid
+from pathlib import Path
+from typing import Any
 
 from rdkit import Chem
 from rdkit.Chem import AllChem, rdDepictor
 from rdkit.Chem.Draw import rdMolDraw2D
 from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
-from ypotheto_compchem_mcp.workspace import workspace_manager, get_workspace_id
+from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
+
 
 def _get_molecules_dir(workspace_id: str) -> Path:
     """Get the molecules directory for the workspace."""
@@ -20,11 +21,12 @@ def _get_index_file(workspace_id: str) -> Path:
     """Get the index file path for molecules."""
     return _get_molecules_dir(workspace_id) / "index.json"
 
-def _load_index(workspace_id: str) -> Dict[str, Any]:
+def _load_index(workspace_id: str) -> dict[str, Any]:
     """Load the molecule index from storage, falling back to database if configured."""
+    import logging
+
     from ypotheto_compchem_mcp.database import get_connection
     from ypotheto_compchem_mcp.storage import storage
-    import logging
     
     conn = get_connection()
     if conn is not None:
@@ -74,7 +76,7 @@ def _load_index(workspace_id: str) -> Dict[str, Any]:
                 pass
         return {}
 
-def _save_index(workspace_id: str, index: Dict[str, Any]):
+def _save_index(workspace_id: str, index: dict[str, Any]):
     """Save the molecule index to disk and storage."""
     from ypotheto_compchem_mcp.storage import storage
     index_file = _get_index_file(workspace_id)
@@ -82,11 +84,12 @@ def _save_index(workspace_id: str, index: Dict[str, Any]):
     index_file.write_text(index_text, encoding="utf-8")
     storage.write_file(workspace_id, "molecules/index.json", index_text.encode("utf-8"))
 
-def save_molecule_coords(workspace_id: str, molecule_id: str, sdf_block: str, xyz_block: str, meta: Dict[str, Any]):
+def save_molecule_coords(workspace_id: str, molecule_id: str, sdf_block: str, xyz_block: str, meta: dict[str, Any]):
     """Helper to save molecule coordinates and update the index."""
-    from ypotheto_compchem_mcp.storage import storage
-    from ypotheto_compchem_mcp.database import get_connection
     import logging
+
+    from ypotheto_compchem_mcp.database import get_connection
+    from ypotheto_compchem_mcp.storage import storage
     mol_dir = _get_molecules_dir(workspace_id)
     
     # Save SDF and XYZ files locally
@@ -119,7 +122,10 @@ def save_molecule_coords(workspace_id: str, molecule_id: str, sdf_block: str, xy
                     meta.get("smiles", ""),
                     meta.get("num_atoms", 0),
                     meta.get("method", ""),
-                    json.dumps({k: v for k, v in meta.items() if k not in ["molecule_id", "workspace_id", "name", "formula", "smiles", "num_atoms", "method"]})
+                    json.dumps({
+                        k: v for k, v in meta.items()
+                        if k not in ["molecule_id", "workspace_id", "name", "formula", "smiles", "num_atoms", "method"]
+                    })
                 )
             )
             conn.commit()
@@ -150,8 +156,8 @@ def get_molecule_path(workspace_id: str, molecule_id: str, fmt: str = "sdf") -> 
         try:
             data = storage.read_file(workspace_id, f"molecules/{molecule_id}.{fmt}")
             filepath.write_bytes(data)
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Molecule {molecule_id} coordinates not found in workspace or storage.")
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"Molecule {molecule_id} coordinates not found in workspace or storage.") from e
     return filepath
 
 def load_molecule_from_workspace(workspace_id: str, molecule_id: str) -> Chem.Mol:
@@ -164,8 +170,8 @@ def load_molecule_from_workspace(workspace_id: str, molecule_id: str) -> Chem.Mo
 
 def build_molecule_from_smiles_engine(
     smiles: str,
-    name: Optional[str] = None
-) -> Dict[str, Any]:
+    name: str | None = None
+) -> dict[str, Any]:
     """
     Parse a SMILES string, generate 3D coordinates using force-field minimization,
     renders 2D SVG layout, saves to workspace molecules, and returns structure data.

@@ -1,15 +1,17 @@
+import logging
+import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
-import logging
-import re
-import math
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from rdkit import Chem
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import (
     load_molecule_from_workspace,
-    save_molecule_coords
+    save_molecule_coords,
 )
 from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 
@@ -24,10 +26,10 @@ def run_xtb_calculation_engine(
     molecule_id: str,
     task: str = "single_point",
     method: str = "GFN2-xTB",
-    solvent: Optional[str] = None,
+    solvent: str | None = None,
     charge: int = 0,
     spin: int = 1  # Spin multiplicity (2S + 1)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run semi-empirical GFN-xTB calculations via subprocess.
     """
@@ -76,8 +78,7 @@ def run_xtb_calculation_engine(
         result = subprocess.run(
             args,
             cwd=tmpdir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=False
         )
@@ -135,9 +136,15 @@ def run_xtb_calculation_engine(
                     }
                     save_molecule_coords(workspace_id, molecule_id, sdf_block, xyz_block, meta)
                 else:
-                    warnings.append({"code": "COORD_TRANSFER_FAILED", "message": "Optimized XYZ was generated but could not be parsed by RDKit."})
+                    warnings.append({
+                        "code": "COORD_TRANSFER_FAILED",
+                        "message": "Optimized XYZ was generated but could not be parsed by RDKit."
+                    })
             else:
-                warnings.append({"code": "OPTIMIZED_COORDS_MISSING", "message": "Geometry optimization completed but optimized coordinate file is missing."})
+                warnings.append({
+                    "code": "OPTIMIZED_COORDS_MISSING",
+                    "message": "Geometry optimization completed but optimized coordinate file is missing."
+                })
                 
         # If vibrations task, parse frequencies
         frequencies = []
@@ -172,9 +179,9 @@ def run_conformer_search_engine(
     workspace_id: str,
     molecule_id: str,
     method: str = "GFN2-xTB",
-    solvent: Optional[str] = None,
+    solvent: str | None = None,
     energy_window_kcal: float = 6.0
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Generate conformer ensembles using CREST.
     """
@@ -209,8 +216,7 @@ def run_conformer_search_engine(
         result = subprocess.run(
             args,
             cwd=tmpdir,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=False
         )
@@ -234,7 +240,7 @@ def run_conformer_search_engine(
             
         # Read energies
         energies = []
-        with open(energies_path, "r", encoding="utf-8") as f:
+        with open(energies_path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split()
                 if parts:
@@ -246,11 +252,10 @@ def run_conformer_search_engine(
         # Comment line containing energy
         # Coordinate lines...
         conformers = []
-        with open(conformers_xyz_path, "r", encoding="utf-8") as f:
+        with open(conformers_xyz_path, encoding="utf-8") as f:
             lines = f.readlines()
             
         idx = 0
-        natoms = mol.GetNumAtoms()
         conformer_index = 0
         
         while idx < len(lines):
@@ -298,15 +303,48 @@ def run_conformer_search_engine(
             # Clean up temporary weight variable from final dictionary
             del c["boltzmann_weight"]
             
+        # A full xyz_block per conformer is unbounded (scales with atom count *
+        # conformer count); write ALL geometries to one multi-record SDF
+        # artifact instead, and keep xyz_block inline only for the lowest-energy
+        # conformer (the one most callers actually want next).
+        sdf_records = []
+        for c in conformers:
+            conf_mol = Chem.MolFromXYZBlock(c["xyz_block"])
+            if conf_mol is None:
+                continue
+            sdf_records.append(Chem.MolToMolBlock(conf_mol) + "$$$$\n")
+
+        sdf_art = None
+        if sdf_records:
+            try:
+                from ypotheto_compchem_mcp.artifacts import register_artifact
+                sdf_art = register_artifact(
+                    f"{molecule_id}_conformers.sdf",
+                    "".join(sdf_records).encode("utf-8"),
+                    "structure",
+                    f"All {len(conformers)} CREST conformer geometries"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate conformer ensemble SDF artifact: {str(e)}")
+
+        lowest = min(conformers, key=lambda c: c["energy_hartree"])
+        conformers_meta = [
+            {**c, "xyz_block": c["xyz_block"]} if c is lowest else {k: v for k, v in c.items() if k != "xyz_block"}
+            for c in conformers
+        ]
+
         return {
             "ok": True,
             "results": {
                 "molecule_id": molecule_id,
                 "num_conformers": len(conformers),
-                "conformers": conformers
+                "conformers": conformers_meta
             },
             "interpretation": (
                 f"CREST conformer search completed successfully for {molecule_id}. "
-                f"Generated {len(conformers)} conformers within {energy_window_kcal} kcal/mol energy window."
-            )
+                f"Generated {len(conformers)} conformers within {energy_window_kcal} kcal/mol energy window. "
+                f"Full geometries are in the attached SDF artifact; xyz_block is included inline only for the "
+                f"lowest-energy conformer ({lowest['conformer_id']})."
+            ),
+            "artifacts": [sdf_art] if sdf_art else []
         }

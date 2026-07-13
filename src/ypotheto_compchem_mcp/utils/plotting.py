@@ -1,5 +1,5 @@
 import io
-from typing import Any, Tuple
+from typing import Any
 
 import matplotlib
 
@@ -23,14 +23,14 @@ plt.rcParams.update(
 )
 
 
-def new_figure(nrows: int = 1, ncols: int = 1, figsize: Tuple[float, float] = (7.0, 4.5)) -> Any:
+def new_figure(nrows: int = 1, ncols: int = 1, figsize: tuple[float, float] = (7.0, 4.5)) -> Any:
     """Return `(fig, ax)` (or `(fig, axes_array)` for nrows*ncols > 1) via
     `plt.subplots`. Centralizing figure creation here keeps every other module from
     needing to import `matplotlib.pyplot` directly (and thus from racing to set the backend)."""
     return plt.subplots(nrows, ncols, figsize=figsize)
 
 
-def new_3d_figure(figsize: Tuple[float, float] = (6.5, 5.0)) -> Tuple[Any, Any]:
+def new_3d_figure(figsize: tuple[float, float] = (6.5, 5.0)) -> tuple[Any, Any]:
     """Return `(fig, ax)` with `ax` a 3D-projection Axes, for surface/wireframe plots."""
     fig = plt.figure(figsize=figsize)
     ax = fig.add_subplot(projection="3d")

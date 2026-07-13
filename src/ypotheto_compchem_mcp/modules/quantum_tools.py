@@ -1,13 +1,125 @@
-from typing import Optional, List
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response, build_provenance
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
-from ypotheto_compchem_mcp.artifacts import register_artifact
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.chemistry.qm_engine import run_single_point_engine, optimize_geometry_engine, run_pyscf_properties_engine, PYSCF_AVAILABLE, estimate_time_seconds as _estimate_time_seconds
 
-_PYSCF_UNAVAILABLE_HINT = "Install pyscf, or run inside the project's Docker image which includes it."
+from ypotheto_compchem_mcp.artifacts import register_artifact
+from ypotheto_compchem_mcp.chemistry.qm_engine import (
+    PYSCF_AVAILABLE,
+    optimize_geometry_engine,
+    run_pyscf_properties_engine,
+    run_single_point_engine,
+)
+from ypotheto_compchem_mcp.chemistry.qm_engine import (
+    estimate_time_seconds as _estimate_time_seconds,
+)
+from ypotheto_compchem_mcp.envelope import (
+    build_provenance,
+    make_error_response,
+    make_success_response,
+    mcp_tool_decorator,
+)
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
+from ypotheto_compchem_mcp.jobs import job_manager
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
+_PYSCF_UNAVAILABLE_HINT = "pip install ypotheto-compchem-mcp[qm], or run inside the project's Docker image which includes it."
+
+def _finalize_run_single_point(res: dict, molecule_id: str, method: str, functional: str, basis: str) -> dict:
+    """Shared post-engine work (report artifact, interpretation, provenance) for
+    run_single_point - called by BOTH the sync path and the async job runner so
+    a job submitted with run_async=True gets the same envelope a sync caller
+    would, instead of just the raw engine return value."""
+    import json
+    report_bytes = json.dumps(res, indent=2).encode("utf-8")
+    report_art = register_artifact(f"{molecule_id}_qm_report.json", report_bytes, "report", "Single Point Energy Report")
+
+    interpretation = (
+        f"Single-point calculation completed. Total Energy = {res['results']['energy_ev']:.4f} eV "
+        f"({res['results']['energy_hartree']:.6f} Hartree). "
+        f"HOMO-LUMO Gap = {res['results']['homo_lumo_gap_ev']:.4f} eV. "
+        f"Dipole Moment (X, Y, Z) = {[round(x, 4) for x in res['results']['dipole_moment_debye']]} Debye."
+    )
+
+    return make_success_response(
+        results=res["results"],
+        interpretation=interpretation,
+        warnings=res["warnings"],
+        artifacts=[report_art],
+        meta={
+            "molecule_id": molecule_id,
+            "method": f"{method}/{functional}/{basis}",
+            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
+        }
+    )
+
+def run_single_point_job(workspace_id, molecule_id, method, functional, basis, charge, spin, solvent):
+    """Composed job function registered with the durable job queue: runs the
+    engine AND the finalize step, so a background job's envelope matches the
+    sync path (report artifact, interpretation, provenance) instead of just
+    whatever run_single_point_engine returns on its own."""
+    res = run_single_point_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, solvent)
+    return _finalize_run_single_point(res, molecule_id, method, functional, basis)
+
+def _finalize_optimize_geometry(res: dict, molecule_id: str, method: str, functional: str, basis: str) -> dict:
+    xyz_bytes = res["xyz_block"].encode("utf-8")
+    sdf_bytes = res["sdf_block"].encode("utf-8")
+
+    opt_mol_id = res["results"]["optimized_molecule_id"]
+    xyz_art = register_artifact(f"{opt_mol_id}.xyz", xyz_bytes, "structure", "Optimized Coordinates (XYZ)")
+    sdf_art = register_artifact(f"{opt_mol_id}.sdf", sdf_bytes, "structure", "Optimized Coordinates (SDF)")
+
+    interpretation = (
+        f"Geometry optimization converged in {res['results']['steps']} steps. "
+        f"Final Energy = {res['results']['final_energy_ev']:.4f} eV. "
+        f"New optimized molecule handle registered: {opt_mol_id}."
+    )
+
+    return make_success_response(
+        results=res["results"],
+        interpretation=interpretation,
+        warnings=res["warnings"],
+        artifacts=[xyz_art, sdf_art],
+        meta={
+            "molecule_id": molecule_id,
+            "optimized_molecule_id": opt_mol_id,
+            "method": f"{method}/{functional}/{basis}",
+            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
+        }
+    )
+
+def run_optimize_geometry_job(
+    workspace_id, molecule_id, method, functional, basis, charge, spin, max_steps, solvent, progress_callback=None
+):
+    """`progress_callback` is deliberately the LAST, keyword-only-in-practice
+    parameter (not threaded through positionally like the sync path does):
+    jobs.py's worker injects it via `kwargs["progress_callback"] = ...` after
+    inspecting this function's signature. The previous code submitted
+    optimize_geometry_engine directly with `None` already passed positionally
+    for this same parameter, so that kwarg injection collided with it -
+    `TypeError: optimize_geometry_engine() got multiple values for argument
+    'progress_callback'` - meaning every async optimize_geometry call (the
+    DEFAULT run_async=True) crashed and silently failed the job. Keeping this
+    parameter last and never passing a positional placeholder for it in the
+    submit_job call below avoids that collision."""
+    res = optimize_geometry_engine(
+        workspace_id, molecule_id, method, functional, basis, charge, spin, max_steps, progress_callback, solvent
+    )
+    return _finalize_optimize_geometry(res, molecule_id, method, functional, basis)
+
+def _finalize_run_pyscf_properties(res: dict, molecule_id: str, method: str, functional: str, basis: str) -> dict:
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"],
+        warnings=res.get("warnings", []),
+        artifacts=res["results"].get("artifacts", []),
+        meta={
+            "molecule_id": molecule_id,
+            "method": f"{method}/{functional}/{basis}",
+            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
+        }
+    )
+
+def run_pyscf_properties_job(workspace_id, molecule_id, method, functional, basis, charge, spin, properties, solvent):
+    res = run_pyscf_properties_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, properties, solvent)
+    return _finalize_run_pyscf_properties(res, molecule_id, method, functional, basis)
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -50,7 +162,7 @@ def run_single_point(
     charge: int = 0,
     spin: int = 0,
     run_async: bool = False,
-    solvent: Optional[str] = None
+    solvent: str | None = None
 ) -> dict:
     """
     Compute single-point energy, dipole moments, HOMO/LUMO energies, and Mulliken charges.
@@ -76,7 +188,10 @@ def run_single_point(
     
     # Run preflight checks
     from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
-    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    from ypotheto_compchem_mcp.chemistry.preflight import (
+        validate_basis_set_coverage,
+        validate_charge_spin_multiplicity,
+    )
     try:
         mol = load_molecule_from_workspace(workspace_id, molecule_id)
     except Exception as e:
@@ -96,7 +211,7 @@ def run_single_point(
         # Submit to background executor
         job = job_manager.submit_job(
             workspace_id,
-            run_single_point_engine,
+            run_single_point_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -118,33 +233,10 @@ def run_single_point(
             f"Job ID: {job.job_id}. Check back shortly."
         )
         return make_success_response(results, interpretation)
-        
+
     # Synchronous execution
     res = run_single_point_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, solvent)
-    
-    # Save report as artifact
-    import json
-    report_bytes = json.dumps(res, indent=2).encode("utf-8")
-    report_art = register_artifact(f"{molecule_id}_qm_report.json", report_bytes, "report", "Single Point Energy Report")
-    
-    interpretation = (
-        f"Single-point calculation completed. Total Energy = {res['results']['energy_ev']:.4f} eV "
-        f"({res['results']['energy_hartree']:.6f} Hartree). "
-        f"HOMO-LUMO Gap = {res['results']['homo_lumo_gap_ev']:.4f} eV. "
-        f"Dipole Moment (X, Y, Z) = {[round(x, 4) for x in res['results']['dipole_moment_debye']]} Debye."
-    )
-    
-    return make_success_response(
-        results=res["results"],
-        interpretation=interpretation,
-        warnings=res["warnings"],
-        artifacts=[report_art],
-        meta={
-            "molecule_id": molecule_id,
-            "method": f"{method}/{functional}/{basis}",
-            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
-        }
-    )
+    return _finalize_run_single_point(res, molecule_id, method, functional, basis)
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -157,7 +249,7 @@ def optimize_geometry(
     spin: int = 0,
     max_steps: int = 50,
     run_async: bool = True,
-    solvent: Optional[str] = None
+    solvent: str | None = None
 ) -> dict:
     """
     Relax molecule coordinates using ASE LBFGS optimizer coupled with PySCF energy/gradients.
@@ -183,7 +275,10 @@ def optimize_geometry(
     
     # Run preflight checks
     from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
-    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    from ypotheto_compchem_mcp.chemistry.preflight import (
+        validate_basis_set_coverage,
+        validate_charge_spin_multiplicity,
+    )
     try:
         mol = load_molecule_from_workspace(workspace_id, molecule_id)
     except Exception as e:
@@ -201,9 +296,12 @@ def optimize_geometry(
     est_sec = _estimate_time_seconds(workspace_id, molecule_id, method, basis) * 15
     
     if run_async or est_sec >= 10:
+        # NOTE: no positional placeholder for progress_callback here (see
+        # run_optimize_geometry_job's docstring) - jobs.py injects it as a
+        # kwarg since it detects the parameter in that function's signature.
         job = job_manager.submit_job(
             workspace_id,
-            optimize_geometry_engine,
+            run_optimize_geometry_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -213,7 +311,6 @@ def optimize_geometry(
             charge,
             spin,
             max_steps,
-            None,
             solvent
         )
         results = {
@@ -227,36 +324,10 @@ def optimize_geometry(
             f"Job ID: {job.job_id}. Poll status to retrieve relaxed coordinates when complete."
         )
         return make_success_response(results, interpretation)
-        
+
     # Synchronous execution
     res = optimize_geometry_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, max_steps, None, solvent)
-    
-    # Save optimized structures as artifacts
-    xyz_bytes = res["xyz_block"].encode("utf-8")
-    sdf_bytes = res["sdf_block"].encode("utf-8")
-    
-    opt_mol_id = res["results"]["optimized_molecule_id"]
-    xyz_art = register_artifact(f"{opt_mol_id}.xyz", xyz_bytes, "structure", "Optimized Coordinates (XYZ)")
-    sdf_art = register_artifact(f"{opt_mol_id}.sdf", sdf_bytes, "structure", "Optimized Coordinates (SDF)")
-    
-    interpretation = (
-        f"Geometry optimization converged in {res['results']['steps']} steps. "
-        f"Final Energy = {res['results']['final_energy_ev']:.4f} eV. "
-        f"New optimized molecule handle registered: {opt_mol_id}."
-    )
-    
-    return make_success_response(
-        results=res["results"],
-        interpretation=interpretation,
-        warnings=res["warnings"],
-        artifacts=[xyz_art, sdf_art],
-        meta={
-            "molecule_id": molecule_id,
-            "optimized_molecule_id": opt_mol_id,
-            "method": f"{method}/{functional}/{basis}",
-            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
-        }
-    )
+    return _finalize_optimize_geometry(res, molecule_id, method, functional, basis)
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -267,9 +338,9 @@ def run_pyscf_properties(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    properties: List[str] = ["mulliken", "loewdin", "esp", "homo_lumo_cubes"],
+    properties: list[str] = ["mulliken", "loewdin", "esp", "homo_lumo_cubes"],  # noqa: B006 - MCP tool param: the default must appear in the advertised tool schema, and this list is never mutated in place.
     run_async: bool = True,
-    solvent: Optional[str] = None
+    solvent: str | None = None
 ) -> dict:
     """
     Perform advanced electronic structure calculations to compute properties like
@@ -296,7 +367,10 @@ def run_pyscf_properties(
     
     # Run preflight checks
     from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
-    from ypotheto_compchem_mcp.chemistry.preflight import validate_charge_spin_multiplicity, validate_basis_set_coverage
+    from ypotheto_compchem_mcp.chemistry.preflight import (
+        validate_basis_set_coverage,
+        validate_charge_spin_multiplicity,
+    )
     try:
         mol = load_molecule_from_workspace(workspace_id, molecule_id)
     except Exception as e:
@@ -317,7 +391,7 @@ def run_pyscf_properties(
     if run_async or est_sec >= 10:
         job = job_manager.submit_job(
             workspace_id,
-            run_pyscf_properties_engine,
+            run_pyscf_properties_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -340,22 +414,11 @@ def run_pyscf_properties(
             f"Job ID: {job.job_id}. Check back shortly."
         )
         return make_success_response(results, interpretation)
-        
+
     res = run_pyscf_properties_engine(
         workspace_id, molecule_id, method, functional, basis, charge, spin, properties, solvent
     )
-
-    return make_success_response(
-        results=res["results"],
-        interpretation=res["interpretation"],
-        warnings=res.get("warnings", []),
-        artifacts=res["results"].get("artifacts", []),
-        meta={
-            "molecule_id": molecule_id,
-            "method": f"{method}/{functional}/{basis}",
-            "provenance": build_provenance("pyscf", method=method, functional=functional, basis=basis)
-        }
-    )
+    return _finalize_run_pyscf_properties(res, molecule_id, method, functional, basis)
 
 @mcp.tool()
 @mcp_tool_decorator

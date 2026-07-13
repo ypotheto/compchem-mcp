@@ -1,21 +1,24 @@
+import importlib.util
+import json
 import os
 import sys
-import json
 import uuid
-import logging
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
-import numpy as np
+from typing import Any
 
+import numpy as np
 from ase import Atoms
 from ase.calculators.calculator import Calculator, all_changes
-from ase.optimize import BFGS, LBFGS
+from ase.optimize import LBFGS
 
-from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace, save_molecule_coords
-from ypotheto_compchem_mcp.workspace import workspace_manager, get_workspace_id
-from ypotheto_compchem_mcp.chemistry.runner import get_engine_runner, DockerContainerRunner
-from ypotheto_compchem_mcp.chemistry.parser import parse_qm_log_with_cclib
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    load_molecule_from_workspace,
+    save_molecule_coords,
+)
+from ypotheto_compchem_mcp.chemistry.runner import DockerContainerRunner, get_engine_runner
 from ypotheto_compchem_mcp.errors import CalculationFailedError
+from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 
 # Hartree to eV conversion factor
 HARTREE_TO_EV = 27.211386245988
@@ -24,12 +27,11 @@ BOHR_TO_ANGSTROM = 0.529177210903
 # Hartree/Bohr to eV/Angstrom force factor: -27.211386245988 / 0.529177210903 = -51.4220674683
 FORCE_CONVERSION = -HARTREE_TO_EV / BOHR_TO_ANGSTROM
 
-# Determine PySCF availability: either local package import or docker execution runner
-try:
-    import pyscf
-    LOCAL_PYSCF_AVAILABLE = True
-except ImportError:
-    LOCAL_PYSCF_AVAILABLE = False
+# Determine PySCF availability: either local package import or docker execution runner.
+# The actual pyscf calls elsewhere in this module import their own submodules
+# locally (e.g. `from pyscf import gto, scf`) where needed - this only checks
+# presence, so it doesn't force-import pyscf just to ask if it's installed.
+LOCAL_PYSCF_AVAILABLE = importlib.util.find_spec("pyscf") is not None
 
 PYSCF_AVAILABLE = LOCAL_PYSCF_AVAILABLE or (os.getenv("COMPCHEM_ENGINE_RUNNER_TYPE", "").lower() == "docker")
 
@@ -45,7 +47,10 @@ class PySCFCalculator(Calculator):
     """
     implemented_properties = ['energy', 'forces', 'dipole']
     
-    def __init__(self, method: str = "DFT", functional: str = "B3LYP", basis: str = "sto-3g", charge: int = 0, spin: int = 0, solvent: Optional[str] = None, **kwargs):
+    def __init__(
+        self, method: str = "DFT", functional: str = "B3LYP", basis: str = "sto-3g",
+        charge: int = 0, spin: int = 0, solvent: str | None = None, **kwargs
+    ):
         Calculator.__init__(self, **kwargs)
         self.method = method.upper()
         self.functional = functional
@@ -54,7 +59,7 @@ class PySCFCalculator(Calculator):
         self.spin = spin
         self.solvent = solvent
         
-    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
+    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):  # noqa: B006 - matches ase.calculators.calculator.Calculator.calculate's own signature exactly; properties is never mutated in place.
         if not PYSCF_AVAILABLE:
             raise RuntimeError("PySCF is not installed or available on this system.")
             
@@ -62,7 +67,7 @@ class PySCFCalculator(Calculator):
         
         # 1. Convert ASE atoms to XYZ block format
         atom_list = []
-        for sym, pos in zip(self.atoms.get_chemical_symbols(), self.atoms.get_positions()):
+        for sym, pos in zip(self.atoms.get_chemical_symbols(), self.atoms.get_positions(), strict=True):
             atom_list.append(f"{sym} {pos[0]} {pos[1]} {pos[2]}")
         xyz_content = f"{len(self.atoms)}\n\n" + "\n".join(atom_list)
         
@@ -111,7 +116,9 @@ class PySCFCalculator(Calculator):
                 # Convert Debye to e * Angstrom (1 Debye = 0.2081943 e * Angstrom)
                 self.results['dipole'] = np.array(res_data["dipole_moment_debye"]) * 0.2081943
         else:
-            # Fallback to cclib log file parsing
+            # Fallback to cclib log file parsing - imported lazily since cclib
+            # is only needed for the Docker-runner path, not the local PySCF path.
+            from ypotheto_compchem_mcp.chemistry.parser import parse_qm_log_with_cclib
             parsed = parse_qm_log_with_cclib(run_res.log_file)
             if parsed.ok:
                 self.results['energy'] = parsed.energy_ev
@@ -135,7 +142,7 @@ class RDKitCalculator(Calculator):
         self.mol_rdkit = mol_rdkit
         self.forcefield = forcefield.upper()
         
-    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):
+    def calculate(self, atoms=None, properties=['energy'], system_changes=all_changes):  # noqa: B006 - matches ase.calculators.calculator.Calculator.calculate's own signature exactly; properties is never mutated in place.
         Calculator.calculate(self, atoms, properties, system_changes)
         
         # Update conformer positions from ASE atoms
@@ -169,8 +176,8 @@ def run_single_point_engine(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    solvent: Optional[str] = None
-) -> Dict[str, Any]:
+    solvent: str | None = None
+) -> dict[str, Any]:
     """
     Perform a single-point quantum or force-field calculation on a stored molecule.
     """
@@ -276,7 +283,9 @@ def run_single_point_engine(
                 "charge": float(charges_list[i]) if i < len(charges_list) else 0.0
             })
     else:
-        # Fallback to cclib log file parsing
+        # Fallback to cclib log file parsing - imported lazily since cclib is
+        # only needed for the Docker-runner path, not the local PySCF path.
+        from ypotheto_compchem_mcp.chemistry.parser import parse_qm_log_with_cclib
         parsed = parse_qm_log_with_cclib(run_res.log_file)
         converged = parsed.ok
         energy_ev = parsed.energy_ev
@@ -324,9 +333,9 @@ def optimize_geometry_engine(
     charge: int = 0,
     spin: int = 0,
     max_steps: int = 50,
-    progress_callback: Optional[Callable[[str], None]] = None,
-    solvent: Optional[str] = None
-) -> Dict[str, Any]:
+    progress_callback: Callable[[str], None] | None = None,
+    solvent: str | None = None
+) -> dict[str, Any]:
     """
     Perform geometry optimization using ASE LBFGS optimizer coupled with PySCF or RDKit calculator.
     """
@@ -450,9 +459,9 @@ def run_pyscf_properties_engine(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    properties: List[str] = None,
-    solvent: Optional[str] = None
-) -> Dict[str, Any]:
+    properties: list[str] = None,
+    solvent: str | None = None
+) -> dict[str, Any]:
     """
     Perform a PySCF calculation and compute expanded properties (ESP, Loewdin pop, orbital cubes).
     """

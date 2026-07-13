@@ -1,17 +1,35 @@
-import uuid
-import time
+import datetime
+import inspect
+import json
 import logging
 import threading
-import json
-import inspect
-import datetime
-from pathlib import Path
+import time
+import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable, Dict, List, Optional
-from ypotheto_compchem_mcp.workspace import workspace_manager
-from ypotheto_compchem_mcp.errors import CompchemError
+from pathlib import Path
+from typing import Any
 
-def _job_error_from_exception(e: Exception) -> Dict[str, Any]:
+from ypotheto_compchem_mcp.errors import CompchemError
+from ypotheto_compchem_mcp.workspace import workspace_manager
+
+
+def _envelope_to_job_fields(envelope: dict[str, Any]) -> dict[str, Any]:
+    """Extract the fields JobState needs from a completed tool/engine envelope.
+    Used identically by the DB-backed and thread-fallback execution paths so
+    get_job_status returns the same shape regardless of which one ran a given
+    job - previously the DB path stored the *whole* envelope as `results` while
+    the thread path stored only the inner `results` dict, so `get_job_status`
+    returned differently-nested structures depending on whether
+    COMPCHEM_DATABASE_URL was set."""
+    return {
+        "results": envelope.get("results", {}),
+        "warnings": envelope.get("warnings", []),
+        "interpretation": envelope.get("interpretation", ""),
+        "artifacts": envelope.get("artifacts", []),
+    }
+
+def _job_error_from_exception(e: Exception) -> dict[str, Any]:
     """
     Background jobs call engine functions directly, bypassing mcp_tool_decorator.
     Preserve a CompchemError's typed code/hint (e.g. BACKEND_UNAVAILABLE) instead
@@ -35,18 +53,62 @@ _FUNCTIONS_REGISTRY = {}
 
 def get_registered_function(name: str):
     if not _FUNCTIONS_REGISTRY:
-        from ypotheto_compchem_mcp.chemistry.qm_engine import run_single_point_engine, optimize_geometry_engine
-        from ypotheto_compchem_mcp.chemistry.vib_engine import run_vibrations_engine, simulate_ir_spectrum_engine
+        from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import (
+            run_ensemble_thermochemistry_engine,
+        )
+        from ypotheto_compchem_mcp.chemistry.kinetics_engine import (
+            run_neb_calculation_engine,
+            run_transition_state_search_engine,
+        )
         from ypotheto_compchem_mcp.chemistry.md_engine import run_molecular_dynamics_engine
-        from ypotheto_compchem_mcp.chemistry.xtb_engine import run_xtb_calculation_engine, run_conformer_search_engine
-        from ypotheto_compchem_mcp.chemistry.qm_engine import run_pyscf_properties_engine
-        from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import run_ensemble_thermochemistry_engine
-        from ypotheto_compchem_mcp.chemistry.thermo_engine import run_mixture_flash_engine, run_reactor_kinetics_engine
-        from ypotheto_compchem_mcp.chemistry.polymer_engine import pack_amorphous_cell_engine, run_lammps_simulation_engine
-        from ypotheto_compchem_mcp.chemistry.kinetics_engine import run_transition_state_search_engine, run_neb_calculation_engine
+        from ypotheto_compchem_mcp.chemistry.mlff_engine import (
+            run_mlff_molecular_dynamics_engine,
+            run_mlff_optimization_engine,
+        )
         from ypotheto_compchem_mcp.chemistry.periodic_engine import run_periodic_dft_engine
-        from ypotheto_compchem_mcp.chemistry.mlff_engine import run_mlff_optimization_engine, run_mlff_molecular_dynamics_engine
-        
+        from ypotheto_compchem_mcp.chemistry.polymer_engine import (
+            pack_amorphous_cell_engine,
+            run_lammps_simulation_engine,
+        )
+        from ypotheto_compchem_mcp.chemistry.qm_engine import (
+            optimize_geometry_engine,
+            run_pyscf_properties_engine,
+            run_single_point_engine,
+        )
+        from ypotheto_compchem_mcp.chemistry.thermo_engine import (
+            run_mixture_flash_engine,
+            run_reactor_kinetics_engine,
+        )
+        from ypotheto_compchem_mcp.chemistry.vib_engine import (
+            run_vibrations_engine,
+            simulate_ir_spectrum_engine,
+        )
+        from ypotheto_compchem_mcp.chemistry.xtb_engine import (
+            run_conformer_search_engine,
+            run_xtb_calculation_engine,
+        )
+        from ypotheto_compchem_mcp.modules.dynamics_tools import run_molecular_dynamics_job
+        from ypotheto_compchem_mcp.modules.ensemble_tools import run_ensemble_thermochemistry_job
+        from ypotheto_compchem_mcp.modules.kinetics_tools import run_transition_state_search_job
+        from ypotheto_compchem_mcp.modules.polymer_tools import run_pack_amorphous_cell_job
+
+        # Composed job functions (engine + finalize post-processing) for the
+        # tools where the sync path does extra work after calling the engine
+        # (registering artifacts, building a richer interpretation, adding
+        # provenance meta) - submitting these instead of the raw *_engine
+        # function is what makes an async job's envelope match what a sync
+        # caller gets. See each modules/*.py file's run_*_job function.
+        from ypotheto_compchem_mcp.modules.quantum_tools import (
+            run_optimize_geometry_job,
+            run_pyscf_properties_job,
+            run_single_point_job,
+        )
+        from ypotheto_compchem_mcp.modules.vibrations_tools import (
+            run_calculate_vibrations_job,
+            run_simulate_ir_spectrum_job,
+        )
+        from ypotheto_compchem_mcp.modules.xtb_tools import run_conformer_search_job
+
         _FUNCTIONS_REGISTRY["run_single_point_engine"] = run_single_point_engine
         _FUNCTIONS_REGISTRY["optimize_geometry_engine"] = optimize_geometry_engine
         _FUNCTIONS_REGISTRY["run_vibrations_engine"] = run_vibrations_engine
@@ -64,6 +126,16 @@ def get_registered_function(name: str):
         _FUNCTIONS_REGISTRY["run_neb_calculation_engine"] = run_neb_calculation_engine
         _FUNCTIONS_REGISTRY["run_periodic_dft_engine"] = run_periodic_dft_engine
         _FUNCTIONS_REGISTRY["run_mlff_optimization_engine"] = run_mlff_optimization_engine
+        _FUNCTIONS_REGISTRY["run_single_point_job"] = run_single_point_job
+        _FUNCTIONS_REGISTRY["run_optimize_geometry_job"] = run_optimize_geometry_job
+        _FUNCTIONS_REGISTRY["run_pyscf_properties_job"] = run_pyscf_properties_job
+        _FUNCTIONS_REGISTRY["run_calculate_vibrations_job"] = run_calculate_vibrations_job
+        _FUNCTIONS_REGISTRY["run_simulate_ir_spectrum_job"] = run_simulate_ir_spectrum_job
+        _FUNCTIONS_REGISTRY["run_molecular_dynamics_job"] = run_molecular_dynamics_job
+        _FUNCTIONS_REGISTRY["run_pack_amorphous_cell_job"] = run_pack_amorphous_cell_job
+        _FUNCTIONS_REGISTRY["run_transition_state_search_job"] = run_transition_state_search_job
+        _FUNCTIONS_REGISTRY["run_ensemble_thermochemistry_job"] = run_ensemble_thermochemistry_job
+        _FUNCTIONS_REGISTRY["run_conformer_search_job"] = run_conformer_search_job
         _FUNCTIONS_REGISTRY["run_mlff_molecular_dynamics_engine"] = run_mlff_molecular_dynamics_engine
         
     return _FUNCTIONS_REGISTRY.get(name)
@@ -111,19 +183,19 @@ class JobState:
         self.estimated_time_seconds = estimated_time
         self.progress_message = progress_message
         self.start_time = time.time()
-        self.end_time: Optional[float] = None
-        self.results: Dict[str, Any] = {}
-        self.warnings: List[Dict[str, str]] = []
+        self.end_time: float | None = None
+        self.results: dict[str, Any] = {}
+        self.warnings: list[dict[str, str]] = []
         self.interpretation: str = ""
-        self.artifacts: List[Dict[str, str]] = []
-        self.error: Optional[Dict[str, str]] = None
+        self.artifacts: list[dict[str, str]] = []
+        self.error: dict[str, str] | None = None
 
     @property
     def elapsed_time_seconds(self) -> int:
         end = self.end_time or time.time()
         return int(end - self.start_time)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "job_id": self.job_id,
             "workspace_id": self.workspace_id,
@@ -141,7 +213,7 @@ class JobState:
 class JobManager:
     def __init__(self, max_workers: int = 4):
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.jobs: Dict[str, JobState] = {}
+        self.jobs: dict[str, JobState] = {}
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
         self.polling_threads = []
@@ -177,7 +249,7 @@ class JobManager:
             data[job.job_id] = job.to_dict()
             file_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-    def _load_job_from_disk(self, workspace_id: str, job_id: str) -> Optional[JobState]:
+    def _load_job_from_disk(self, workspace_id: str, job_id: str) -> JobState | None:
         """Load job state from disk."""
         file_path = self._get_jobs_file(workspace_id)
         if not file_path.exists():
@@ -204,7 +276,7 @@ class JobManager:
         except Exception:
             return None
 
-    def _load_job_from_db(self, workspace_id: str, job_id: str) -> Optional[JobState]:
+    def _load_job_from_db(self, workspace_id: str, job_id: str) -> JobState | None:
         """Load job state from PostgreSQL."""
         from ypotheto_compchem_mcp.database import get_connection
         conn = get_connection()
@@ -241,10 +313,15 @@ class JobManager:
                 if isinstance(finished_at, datetime.datetime):
                     job.end_time = finished_at.timestamp()
                     
-            job.results = results or {}
-            job.warnings = warnings or []
-            job.interpretation = job.results.get("interpretation", "")
-            job.artifacts = job.results.get("artifacts", [])
+            # `results` is the whole envelope as returned by the engine function
+            # (see _execute_job_with_conn) - unpack it the same way the
+            # thread-fallback path does, so job.to_dict() has an identical shape
+            # regardless of backend.
+            fields = _envelope_to_job_fields(results or {})
+            job.results = fields["results"]
+            job.warnings = warnings or fields["warnings"]
+            job.interpretation = fields["interpretation"]
+            job.artifacts = fields["artifacts"]
             job.error = error
             
             cur.close()
@@ -254,7 +331,7 @@ class JobManager:
             logging.error(f"Failed to load job {job_id} from DB: {str(e)}", exc_info=True)
             return None
 
-    def get_job(self, workspace_id: str, job_id: str) -> Optional[JobState]:
+    def get_job(self, workspace_id: str, job_id: str) -> JobState | None:
         """Retrieve job state. Checks database first if configured, otherwise falls back to memory/disk."""
         from ypotheto_compchem_mcp.config import settings
         if settings.database_url:
@@ -292,7 +369,7 @@ class JobManager:
             else:
                 logging.error(f"Failed to reclaim crashed background jobs: {str(e)}", exc_info=True)
 
-    def _claim_next_job_with_conn(self, conn) -> Optional[Dict[str, Any]]:
+    def _claim_next_job_with_conn(self, conn) -> dict[str, Any] | None:
         job_info = None
         try:
             cur = conn.cursor()
@@ -337,11 +414,11 @@ class JobManager:
     def _update_job_status(
         self,
         job_id: str,
-        status: Optional[str] = None,
-        progress_message: Optional[str] = None,
-        results: Optional[Dict[str, Any]] = None,
-        warnings: Optional[List[Dict[str, str]]] = None,
-        error: Optional[Dict[str, str]] = None,
+        status: str | None = None,
+        progress_message: str | None = None,
+        results: dict[str, Any] | None = None,
+        warnings: list[dict[str, str]] | None = None,
+        error: dict[str, str] | None = None,
         conn = None
     ):
         should_close = False
@@ -396,7 +473,7 @@ class JobManager:
                 except Exception:
                     pass
 
-    def _execute_job_with_conn(self, job_info: Dict[str, Any], conn):
+    def _execute_job_with_conn(self, job_info: dict[str, Any], conn):
         job_id = job_info["job_id"]
         workspace_id = job_info["workspace_id"]
         func_name = job_info["func_name"]
@@ -477,7 +554,7 @@ class JobManager:
                         time.sleep(1.0)
                 else:
                     time.sleep(2.0)
-            except Exception as e:
+            except Exception:
                 if conn:
                     try:
                         conn.close()
@@ -494,7 +571,7 @@ class JobManager:
     def submit_job(
         self,
         workspace_id: str,
-        func: Callable[..., Dict[str, Any]],
+        func: Callable[..., dict[str, Any]],
         estimated_time: int,
         *args,
         **kwargs
@@ -509,7 +586,8 @@ class JobManager:
                 cur = conn.cursor()
                 cur.execute(
                     """
-                    INSERT INTO compchem.jobs (job_id, workspace_id, status, progress_message, estimated_time_seconds, func_name, args, kwargs)
+                    INSERT INTO compchem.jobs
+                        (job_id, workspace_id, status, progress_message, estimated_time_seconds, func_name, args, kwargs)
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
                     """,
                     (
@@ -527,7 +605,10 @@ class JobManager:
                 cur.close()
                 conn.close()
                 
-                job = JobState(job_id=job_id, workspace_id=workspace_id, estimated_time=estimated_time, status="queued", progress_message="Job queued in database.")
+                job = JobState(
+                    job_id=job_id, workspace_id=workspace_id, estimated_time=estimated_time,
+                    status="queued", progress_message="Job queued in database."
+                )
                 return job
             except Exception as e:
                 logging.error(f"Failed to submit job to DB queue: {str(e)}", exc_info=True)
@@ -561,10 +642,11 @@ class JobManager:
                 if envelope.get("ok", True):
                     job.status = "completed"
                     job.progress_message = "Calculation completed successfully."
-                    job.results = envelope.get("results", {})
-                    job.warnings = envelope.get("warnings", [])
-                    job.interpretation = envelope.get("interpretation", "")
-                    job.artifacts = envelope.get("artifacts", [])
+                    fields = _envelope_to_job_fields(envelope)
+                    job.results = fields["results"]
+                    job.warnings = fields["warnings"]
+                    job.interpretation = fields["interpretation"]
+                    job.artifacts = fields["artifacts"]
                 else:
                     job.status = "failed"
                     job.progress_message = "Calculation failed."

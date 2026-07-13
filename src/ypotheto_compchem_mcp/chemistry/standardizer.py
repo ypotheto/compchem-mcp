@@ -1,11 +1,13 @@
 import logging
-from typing import Any, Dict, List, Optional
-from rdkit import Chem
-from rdkit.Chem.SaltRemover import SaltRemover
-from rdkit.Chem.MolStandardize import rdMolStandardize
+from typing import Any
 
-from ypotheto_compchem_mcp.workspace import workspace_manager
-from ypotheto_compchem_mcp.chemistry.builder_engine import _get_molecules_dir, _load_index, _save_index, save_molecule_coords
+from rdkit import Chem
+from rdkit.Chem.MolStandardize import rdMolStandardize
+from rdkit.Chem.SaltRemover import SaltRemover
+
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    save_molecule_coords,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +17,8 @@ def standardize_molecule_engine(
     strip_salts: bool = True,
     neutralize: bool = True,
     canonicalize_tautomer: bool = True,
-    name: Optional[str] = None
-) -> Dict[str, Any]:
+    name: str | None = None
+) -> dict[str, Any]:
     """
     Standardize a molecule: parses structure, strips salts, neutralizes charge,
     canonicalizes tautomers, and sanitizes the final molecule.
@@ -121,7 +123,7 @@ def standardize_molecule_engine(
 def enumerate_tautomers_engine(
     workspace_id: str,
     molecule_id: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Enumerate all tautomeric forms for a stored molecule.
     """

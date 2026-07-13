@@ -1,15 +1,20 @@
 import os
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from rdkit import Chem
-from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine, load_molecule_from_workspace
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
-from ypotheto_compchem_mcp.chemistry.xtb_engine import (
-    run_xtb_calculation_engine,
-    run_conformer_search_engine
+
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    build_molecule_from_smiles_engine,
+    load_molecule_from_workspace,
 )
-from ypotheto_compchem_mcp.modules.xtb_tools import run_xtb_calculation, run_conformer_search
+from ypotheto_compchem_mcp.chemistry.xtb_engine import (
+    run_conformer_search_engine,
+    run_xtb_calculation_engine,
+)
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
+from ypotheto_compchem_mcp.modules.xtb_tools import run_conformer_search, run_xtb_calculation
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 def test_xtb_missing_throws():
     with patch("ypotheto_compchem_mcp.chemistry.xtb_engine.XTB_AVAILABLE", False):
@@ -103,8 +108,6 @@ def test_xtb_opt_coordinate_transfer(mock_run):
     molecule_id = mol_res["molecule_id"]
     
     # Mock opt XYZ file generation during optimization
-    original_run = subprocess_run_stub = mock_run
-    
     def side_effect(args, **kwargs):
         # Write dummy optimized coordinate file to the target cwd directory
         cwd = kwargs.get("cwd")
@@ -193,3 +196,13 @@ H   0.00000000  -0.76200000  -0.479
     # Rel weights: 1.0 vs 0.120 -> populations: 1/1.12 = 89%, 0.12/1.12 = 11%
     assert confs[0]["boltzmann_population"] > 0.85
     assert confs[1]["boltzmann_population"] < 0.15
+
+    # xyz_block is bounded: only the lowest-energy conformer keeps it inline,
+    # and the full ensemble is written to one multi-record SDF artifact instead.
+    assert "xyz_block" in confs[0]
+    assert "xyz_block" not in confs[1]
+    # run_conformer_search_engine is called directly here, so artifacts are raw
+    # ArtifactInfo objects (attribute access), not yet dict-serialized the way
+    # make_success_response()/the tool wrapper would return them.
+    sdf_artifacts = [a for a in res["artifacts"] if a.url.endswith(".sdf")]
+    assert len(sdf_artifacts) == 1

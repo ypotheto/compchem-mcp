@@ -1,7 +1,8 @@
 import json
+
 import ypotheto_compchem_mcp.usage as usage_module
-from ypotheto_compchem_mcp.usage import log_usage
 from ypotheto_compchem_mcp.config import settings
+from ypotheto_compchem_mcp.usage import log_usage
 
 
 def test_log_usage_is_lazy_and_binds_to_current_data_dir(tmp_path, monkeypatch):

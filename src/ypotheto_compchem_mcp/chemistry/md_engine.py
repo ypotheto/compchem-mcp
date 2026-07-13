@@ -1,19 +1,25 @@
 import io
-import logging
-from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
-import numpy as np
-from ypotheto_compchem_mcp.utils import plotting as _plotting  # noqa: F401  (import sets the Agg backend before pyplot is touched)
 import matplotlib.pyplot as plt
 from ase import Atoms, units
+from ase.md.langevin import Langevin
 from ase.md.velocitydistribution import MaxwellBoltzmannDistribution
 from ase.md.verlet import VelocityVerlet
-from ase.md.langevin import Langevin
 
-from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace, save_molecule_coords
-from ypotheto_compchem_mcp.chemistry.qm_engine import PySCFCalculator, RDKitCalculator, PYSCF_AVAILABLE
-from ypotheto_compchem_mcp.workspace import workspace_manager
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    load_molecule_from_workspace,
+)
+from ypotheto_compchem_mcp.chemistry.qm_engine import (
+    PYSCF_AVAILABLE,
+    PySCFCalculator,
+    RDKitCalculator,
+)
+from ypotheto_compchem_mcp.utils import (
+    plotting as _plotting,  # noqa: F401  (import sets the Agg backend before pyplot is touched)
+)
+
 
 def run_molecular_dynamics_engine(
     workspace_id: str,
@@ -23,12 +29,12 @@ def run_molecular_dynamics_engine(
     temperature_k: float = 300.0,
     ensemble: str = "NVT",
     calculator_type: str = "MMFF94",
-    functional: Optional[str] = "B3LYP",
-    basis: Optional[str] = "sto-3g",
+    functional: str | None = "B3LYP",
+    basis: str | None = "sto-3g",
     charge: int = 0,
     spin: int = 0,
-    progress_callback: Optional[Callable[[str], None]] = None
-) -> Dict[str, Any]:
+    progress_callback: Callable[[str], None] | None = None
+) -> dict[str, Any]:
     """
     Run molecular dynamics using Langevin (NVT) or VelocityVerlet (NVE) ensembles.
     Returns energies, temperature profile, trajectory XYZ frames, and plot bytes.
@@ -93,7 +99,7 @@ def run_molecular_dynamics_engine(
             f"{len(atoms)}",
             f"Frame step={current_step} time={current_step*time_step_fs:.1f}fs E_tot={tot:.4f}eV T={temp:.1f}K"
         ]
-        for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+        for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
             frame_lines.append(f"{sym} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}")
         trajectory_frames.append("\n".join(frame_lines))
 
@@ -106,7 +112,6 @@ def run_molecular_dynamics_engine(
                 progress_callback(f"MD Progress: Step {step + 1}/{steps} (T = {atoms.get_temperature():.1f} K)")
                 
     # Plotting: Generate figures
-    steps_arr = [x["step"] for x in energy_log]
     times_arr = [x["time_fs"] for x in energy_log]
     pot_arr = [x["potential_energy_ev"] for x in energy_log]
     kin_arr = [x["kinetic_energy_ev"] for x in energy_log]

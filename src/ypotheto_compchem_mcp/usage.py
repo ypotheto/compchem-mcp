@@ -1,10 +1,11 @@
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
+
 from ypotheto_compchem_mcp.config import settings
 
-_logger_instance: Optional[logging.Logger] = None
+_logger_instance: logging.Logger | None = None
 _bound_log_file = None
 
 
@@ -42,12 +43,12 @@ def log_usage(
     tool_name: str,
     duration_ms: float,
     ok: bool,
-    molecule_id: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None
+    molecule_id: str | None = None,
+    details: dict[str, Any] | None = None
 ) -> None:
     """Log a tool execution event to the usage.log file in JSON Lines format."""
     event = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "workspace_id": workspace_id,
         "tool": tool_name,
         "duration_ms": int(duration_ms),

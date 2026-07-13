@@ -1,12 +1,17 @@
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
-from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine, get_molecule_path
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    build_molecule_from_smiles_engine,
+    get_molecule_path,
+)
+from ypotheto_compchem_mcp.envelope import WarningInfo, make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.server import mcp
+
+_MAX_INLINE_CONTENT_BYTES = 50 * 1024
 
 @mcp.tool()
 @mcp_tool_decorator
-def build_molecule_from_smiles(smiles: str, name: Optional[str] = None) -> dict:
+def build_molecule_from_smiles(smiles: str, name: str | None = None) -> dict:
     """
     Generate optimized 3D coordinates from a SMILES representation.
     Use when building or initializing a new molecule structure.
@@ -50,37 +55,70 @@ def build_molecule_from_smiles(smiles: str, name: Optional[str] = None) -> dict:
 @mcp_tool_decorator
 def get_3d_coordinates(molecule_id: str, format: str = "xyz") -> dict:
     """
-    Retrieve coordinate contents (SDF or XYZ) of a stored molecule.
+    Retrieve coordinate contents (SDF, XYZ, or PDB) of a stored molecule.
     Use when needing to view coordinate tables or output structures.
-    
+
     Parameters:
     - molecule_id: The stored molecule handle (e.g., mol_a1b2c3d4)
-    - format: Coordinate format, either 'xyz' or 'sdf' (default is 'xyz')
+    - format: Coordinate format, one of 'xyz', 'sdf', or 'pdb' (default is 'xyz')
     """
     clean_fmt = format.lower().strip()
-    if clean_fmt not in ("xyz", "sdf"):
-        raise ValueError("Invalid format. Must be either 'xyz' or 'sdf'.")
-        
+    if clean_fmt not in ("xyz", "sdf", "pdb"):
+        raise ValueError("Invalid format. Must be one of 'xyz', 'sdf', or 'pdb'.")
+
     from ypotheto_compchem_mcp.workspace import get_workspace_id
     workspace_id = get_workspace_id()
-    path = get_molecule_path(workspace_id, molecule_id, clean_fmt)
-    content = path.read_text(encoding="utf-8")
+    if clean_fmt == "pdb":
+        # PDB is never persisted alongside the XYZ/SDF a molecule is saved as
+        # (see save_molecule_coords) - generate it on the fly from the stored
+        # SDF's RDKit Mol instead of reading a file that would never exist.
+        from rdkit import Chem
+
+        from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
+        mol = load_molecule_from_workspace(workspace_id, molecule_id)
+        content = Chem.MolToPDBBlock(mol)
+    else:
+        path = get_molecule_path(workspace_id, molecule_id, clean_fmt)
+        content = path.read_text(encoding="utf-8")
     
     # Register download artifact
     content_bytes = content.encode("utf-8")
     artifact = register_artifact(f"{molecule_id}.{clean_fmt}", content_bytes, "structure", f"3D Structure ({clean_fmt.upper()})")
-    
-    results = {
-        "molecule_id": molecule_id,
-        "format": clean_fmt,
-        "content": content
-    }
-    
-    interpretation = f"Retrieved 3D coordinates for {molecule_id} in {clean_fmt.upper()} format."
-    
+
+    warnings = []
+    if len(content_bytes) > _MAX_INLINE_CONTENT_BYTES:
+        # Omit inline content rather than let a large structure (many atoms, or
+        # SDF conformer blocks) blow up the response size - the artifact still
+        # carries the full content.
+        results = {
+            "molecule_id": molecule_id,
+            "format": clean_fmt,
+            "content": None
+        }
+        warnings.append(WarningInfo(
+            type="CONTENT_TOO_LARGE",
+            message=(
+                f"Structure content ({len(content_bytes)} bytes) exceeds the "
+                f"{_MAX_INLINE_CONTENT_BYTES}-byte inline limit; omitted from the response. "
+                f"Download the full content from the artifact URL instead."
+            )
+        ))
+        interpretation = (
+            f"Retrieved 3D coordinates for {molecule_id} in {clean_fmt.upper()} format. "
+            f"Content omitted inline (exceeds size limit) - see the attached artifact."
+        )
+    else:
+        results = {
+            "molecule_id": molecule_id,
+            "format": clean_fmt,
+            "content": content
+        }
+        interpretation = f"Retrieved 3D coordinates for {molecule_id} in {clean_fmt.upper()} format."
+
     return make_success_response(
         results=results,
         interpretation=interpretation,
+        warnings=warnings,
         artifacts=[artifact],
         meta={"molecule_id": molecule_id}
     )

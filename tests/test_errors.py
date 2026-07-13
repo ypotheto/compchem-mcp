@@ -1,12 +1,12 @@
 import time
-import pytest
+
 from ypotheto_compchem_mcp.envelope import mcp_tool_decorator
 from ypotheto_compchem_mcp.errors import (
     BackendUnavailableError,
-    ValidationError,
     CalculationFailedError,
+    ValidationError,
 )
-from ypotheto_compchem_mcp.jobs import job_manager, _job_error_from_exception
+from ypotheto_compchem_mcp.jobs import _job_error_from_exception, job_manager
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
@@ -89,6 +89,7 @@ def test_unexpected_exception_includes_correlation_id_in_hint():
 
 def test_exception_after_plotting_closes_leaked_figures():
     import matplotlib.pyplot as plt
+
     from ypotheto_compchem_mcp.utils.plotting import new_figure
 
     @mcp_tool_decorator

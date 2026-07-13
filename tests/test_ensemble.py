@@ -1,11 +1,13 @@
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from rdkit import Chem
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.errors import CalculationFailedError
 from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import run_ensemble_thermochemistry_engine
+from ypotheto_compchem_mcp.errors import CalculationFailedError
 from ypotheto_compchem_mcp.modules.ensemble_tools import run_ensemble_thermochemistry
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 @patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.CREST_AVAILABLE", True)
 @patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.XTB_AVAILABLE", True)
@@ -106,6 +108,18 @@ def test_ensemble_pipeline_success(mock_xtb, mock_crest):
     # Ensemble free energy should lie between the two conformer values
     assert conf0["total_gibbs_energy_ev"] < results["ensemble_gibbs_free_energy_ev"] < conf1["total_gibbs_energy_ev"]
 
+    # Full frequency lists are bounded: only the lowest-Gibbs conformer (conf0,
+    # since its total_gibbs_energy_ev is lower) keeps a (short) inline preview;
+    # every conformer gets summary stats, and the full table is an artifact.
+    assert "frequencies_cm1" not in conf0
+    assert "frequencies_cm1" not in conf1
+    assert conf0["frequencies_cm1_preview"] == [1594.0, 3657.0, 3756.0]
+    assert "frequencies_cm1_preview" not in conf1
+    assert conf0["frequency_summary"]["count"] == 3
+    assert conf1["frequency_summary"]["count"] == 3
+    json_artifacts = [a for a in res["artifacts"] if a.url.endswith(".json")]
+    assert len(json_artifacts) == 1
+
 @patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.CREST_AVAILABLE", True)
 @patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.XTB_AVAILABLE", True)
 @patch("ypotheto_compchem_mcp.chemistry.ensemble_pipeline.run_conformer_search_engine")
@@ -173,7 +187,6 @@ def test_ensemble_pipeline_skips_conformer_that_raises_and_continues(mock_xtb, m
 
 @patch("ypotheto_compchem_mcp.modules.ensemble_tools.CREST_AVAILABLE", False)
 def test_ensemble_pipeline_missing_binaries_graceful_fail():
-    workspace_id = get_workspace_id()
     # Build Water
     mol_res = build_molecule_from_smiles_engine("O", "Water")
     molecule_id = mol_res["molecule_id"]

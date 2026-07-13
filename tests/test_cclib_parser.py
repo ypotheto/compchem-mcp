@@ -1,8 +1,10 @@
-from unittest.mock import patch, MagicMock
-import numpy as np
-import pytest
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+
 from ypotheto_compchem_mcp.chemistry.parser import parse_qm_log_with_cclib
+
 
 def test_parse_qm_log_with_cclib_success():
     mock_data = MagicMock()
@@ -30,9 +32,10 @@ def test_parse_qm_log_with_cclib_success():
         assert res.mulliken_charges[1].charge == 0.2
 
 def test_local_subprocess_runner():
-    from ypotheto_compchem_mcp.chemistry.runner import LocalSubprocessRunner
-    import tempfile
     import sys
+    import tempfile
+
+    from ypotheto_compchem_mcp.chemistry.runner import LocalSubprocessRunner
     
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
@@ -55,8 +58,9 @@ def test_local_subprocess_runner():
         assert (tmp_path / "jobs" / "test_job" / "data.txt").read_text(encoding="utf-8") == "some test data"
 
 def test_spaces_backend_mock():
+    from unittest.mock import MagicMock, patch
+
     from ypotheto_compchem_mcp.storage import SpacesBackend
-    from unittest.mock import patch, MagicMock
     
     mock_client = MagicMock()
     

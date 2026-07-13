@@ -1,11 +1,15 @@
-import pytest
-import sys
 import time
-from unittest.mock import patch, MagicMock
-from ypotheto_compchem_mcp.modules.quantum_tools import estimate_calculation_time, run_single_point, optimize_geometry, get_job_status, run_pyscf_properties
+from unittest.mock import patch
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.jobs import job_manager
+from ypotheto_compchem_mcp.modules.quantum_tools import (
+    estimate_calculation_time,
+    get_job_status,
+    optimize_geometry,
+    run_pyscf_properties,
+    run_single_point,
+)
+
 
 def test_estimate_calculation_time():
     # Build a test molecule (Water)
@@ -27,11 +31,14 @@ def test_qm_pyscf_unavailable_on_windows():
         assert envelope["ok"] is False
         assert envelope["error"]["code"] == "BACKEND_UNAVAILABLE"
         assert "not installed or available" in envelope["error"]["message"]
+        # The hint must name the actual pip extra to install (Phase 5.1), not just say "install pyscf".
+        assert "ypotheto-compchem-mcp[qm]" in envelope["error"]["hint"]
 
         envelope = optimize_geometry("mol_dummy")
         assert envelope["ok"] is False
         assert envelope["error"]["code"] == "BACKEND_UNAVAILABLE"
         assert "not installed or available" in envelope["error"]["message"]
+        assert "ypotheto-compchem-mcp[qm]" in envelope["error"]["hint"]
 
 @patch("ypotheto_compchem_mcp.modules.quantum_tools.PYSCF_AVAILABLE", True)
 @patch("ypotheto_compchem_mcp.modules.quantum_tools._estimate_time_seconds", return_value=5)
@@ -122,7 +129,10 @@ def test_run_pyscf_properties_sync(mock_engine, mock_est):
             "dipole_moment_debye": [0.0, 0.0, 1.8],
             "mulliken_charges": [{"index": 0, "element": "O", "charge": -0.4}],
             "loewdin_charges": [{"index": 0, "element": "O", "charge": -0.3}],
-            "artifacts": [{"name": "mol_test_homo.cube", "url": "/artifacts/mol_test_homo.cube", "kind": "structure", "description": "HOMO Orbital"}]
+            "artifacts": [{
+                "name": "mol_test_homo.cube", "url": "/artifacts/mol_test_homo.cube",
+                "kind": "structure", "description": "HOMO Orbital"
+            }]
         },
         "interpretation": "Calculated properties successfully.",
         "warnings": []

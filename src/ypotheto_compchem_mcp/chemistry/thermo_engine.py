@@ -1,9 +1,11 @@
-import os
-import sys
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from ypotheto_compchem_mcp.errors import ValidationError, BackendUnavailableError, CalculationFailedError
+from ypotheto_compchem_mcp.errors import (
+    BackendUnavailableError,
+    CalculationFailedError,
+    ValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,20 +42,23 @@ except Exception as e:
 
 def run_mixture_flash_engine(
     workspace_id: str,
-    components: List[str],
-    mole_fractions: List[float],
+    components: list[str],
+    mole_fractions: list[float],
     temperature_k: float,
     pressure_pa: float,
     model_name: str = "PC-SAFT",
     flash_type: str = "VLE"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Perform a thermodynamic flash calculation on a mixture using Clapeyron.jl.
     """
     if not CLAPEYRON_AVAILABLE:
         raise BackendUnavailableError(
             "Clapeyron.jl/juliacall is not available on this host.",
-            hint="Install juliacall and Julia's Clapeyron package, or run inside the project's Docker image."
+            hint=(
+                "pip install ypotheto-compchem-mcp[thermo] (juliacall) plus the Julia "
+                "Clapeyron package, or run inside the project's Docker image."
+            )
         )
 
     comps = [c.lower() for c in components]
@@ -112,18 +117,18 @@ def run_mixture_flash_engine(
 def run_reactor_kinetics_engine(
     workspace_id: str,
     mechanism: str,
-    initial_state: Dict[str, Any],
+    initial_state: dict[str, Any],
     reactor_type: str = "batch",
     residence_time_s: float = 1.0,
     steps: int = 100
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Simulate chemical kinetics and species concentrations over time using Cantera.
     """
     if not CANTERA_AVAILABLE:
         raise BackendUnavailableError(
             "Cantera is not available on this host.",
-            hint="Install cantera, or run inside the project's Docker image which includes it."
+            hint="pip install ypotheto-compchem-mcp[thermo], or run inside the project's Docker image which includes it."
         )
 
     try:
@@ -176,8 +181,10 @@ def run_reactor_kinetics_engine(
             
     plot_art = None
     try:
-        import matplotlib.pyplot as plt
         import io
+
+        import matplotlib.pyplot as plt
+
         from ypotheto_compchem_mcp.artifacts import register_artifact
         
         plt.figure(figsize=(8, 5))
@@ -196,27 +203,64 @@ def run_reactor_kinetics_engine(
         plot_art = register_artifact("reactor_kinetics_profile.png", buf.getvalue(), "plot", "Reactor Kinetics Species Profile")
     except Exception as e:
         logger.warning(f"Failed to generate reactor kinetics plot: {str(e)}")
-        
+
+    # Full-resolution timeseries goes to a CSV artifact - a user-controlled
+    # `steps` count could otherwise make the inline response unbounded.
+    csv_art = None
+    try:
+        import csv
+        import io as io_module
+
+        from ypotheto_compchem_mcp.artifacts import register_artifact as _register_artifact
+
+        buf = io_module.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["time_s", "temperature_k", "pressure_pa"] + [f"X_{name}" for name in major_species])
+        for i in range(len(times)):
+            writer.writerow(
+                [times[i], temperatures[i], pressures[i]] + [concentrations[name][i] for name in major_species]
+            )
+        csv_art = _register_artifact(
+            "reactor_kinetics_timeseries.csv",
+            buf.getvalue().encode("utf-8"),
+            "report",
+            "Full-resolution reactor kinetics timeseries"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to generate reactor kinetics CSV artifact: {str(e)}")
+
+    from ypotheto_compchem_mcp.utils.limits import cap_series
+    times_preview, was_truncated = cap_series(times)
+    temperatures_preview, _ = cap_series(temperatures)
+    pressures_preview, _ = cap_series(pressures)
+    species_preview = {name: cap_series(concentrations[name])[0] for name in major_species}
+
     results = {
-        "times": times,
-        "temperatures": temperatures,
-        "pressures": pressures,
-        "species_mole_fractions": {name: concentrations[name] for name in major_species},
+        "times": times_preview,
+        "temperatures": temperatures_preview,
+        "pressures": pressures_preview,
+        "species_mole_fractions": species_preview,
         "final_state": {
             "temperature": float(r.thermo.T),
             "pressure": float(r.thermo.P),
             "X": {name: float(r.thermo[name].X[0]) for name in major_species}
-        }
+        },
+        "truncated": was_truncated
     }
-    
+
     interpretation = (
         f"Cantera reactor simulation completed successfully.\n"
         f"Reactor type: {reactor_type.upper()} Batch Reactor.\n"
         f"Final Temperature = {r.thermo.T:.2f} K, Pressure = {r.thermo.P:.2f} Pa.\n"
         f"Major species at end: {', '.join(f'{k}: {v:.3f}' for k, v in results['final_state']['X'].items())}."
     )
-    
-    artifacts = [plot_art] if plot_art else []
+    if was_truncated:
+        interpretation += (
+            f" Timeseries shown inline is decimated to {len(times_preview)} points; "
+            f"the full {len(times)}-point timeseries is in the CSV artifact."
+        )
+
+    artifacts = [a for a in [plot_art, csv_art] if a]
     
     return {
         "ok": True,
@@ -226,12 +270,12 @@ def run_reactor_kinetics_engine(
     }
 
 def calculate_transport_properties_engine(
-    components: List[str],
-    mole_fractions: List[float],
+    components: list[str],
+    mole_fractions: list[float],
     temperature_k: float,
     pressure_pa: float,
     model: str = "Cantera"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Calculate viscosity, thermal conductivity, and binary diffusion coefficients.
     """
@@ -239,12 +283,12 @@ def calculate_transport_properties_engine(
         if not CANTERA_AVAILABLE:
             raise BackendUnavailableError(
                 "Cantera is not available on this host.",
-                hint="Install cantera, or run inside the project's Docker image which includes it."
+                hint="pip install ypotheto-compchem-mcp[thermo], or run inside the project's Docker image which includes it."
             )
 
         try:
             gas = ct.Solution("gri30.yaml")
-            comp_dict = {c.upper(): f for c, f in zip(components, mole_fractions)}
+            comp_dict = {c.upper(): f for c, f in zip(components, mole_fractions, strict=True)}
             comp_str = ", ".join(f"{k}:{v}" for k, v in comp_dict.items())
             
             gas.TPX = temperature_k, pressure_pa, comp_str

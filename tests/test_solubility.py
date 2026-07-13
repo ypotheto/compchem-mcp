@@ -1,8 +1,13 @@
 import pytest
-from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
-from ypotheto_compchem_mcp.chemistry.solubility_engine import calculate_hsp_engine, calculate_hsp_distance_engine
+from ypotheto_compchem_mcp.chemistry.solubility_engine import (
+    calculate_hsp_distance_engine,
+    calculate_hsp_engine,
+)
 from ypotheto_compchem_mcp.modules.solubility_tools import calculate_hsp, calculate_hsp_distance
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 def test_acetone_solubility():
     workspace_id = get_workspace_id()
@@ -35,8 +40,7 @@ def test_ethanol_solubility():
     molecule_id = res_build["molecule_id"]
     
     res = calculate_hsp_engine(workspace_id, molecule_id)
-    hsp = res["hansen_parameters"]
-    
+
     # Check mapped groups: 1 CH3, 1 CH2, 1 hydroxyl_OH
     assert res["mapped_groups"]["CH3"] == 1
     assert res["mapped_groups"]["CH2"] == 1

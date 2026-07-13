@@ -1,6 +1,6 @@
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ypotheto_compchem_mcp.errors import BackendUnavailableError
 
@@ -23,8 +23,9 @@ except ImportError:
     MACE_AVAILABLE = False
 
 def _load_structure(workspace_id: str, molecule_id: str):
-    from ypotheto_compchem_mcp.workspace import workspace_manager
     from ase.io import read
+
+    from ypotheto_compchem_mcp.workspace import workspace_manager
     workspace_dir = workspace_manager.get_workspace_dir(workspace_id)
     cif_path = workspace_dir / "molecules" / f"{molecule_id}.cif"
     if cif_path.exists():
@@ -40,27 +41,27 @@ def _get_mlff_calculator(model_name: str):
         if not CHGNET_AVAILABLE:
             raise BackendUnavailableError(
                 "The CHGNet MLFF model could not be loaded (chgnet is not installed).",
-                hint="Install chgnet, or use run_xtb_calculation / optimize_geometry instead.",
+                hint="pip install ypotheto-compchem-mcp[mlff], or use run_xtb_calculation / optimize_geometry instead.",
             )
         try:
             return CHGNetCalculator()
         except Exception as e:
             raise BackendUnavailableError(
                 f"Failed to load CHGNet model: {str(e)}",
-                hint="Install chgnet, or use run_xtb_calculation / optimize_geometry instead.",
+                hint="pip install ypotheto-compchem-mcp[mlff], or use run_xtb_calculation / optimize_geometry instead.",
             ) from e
     elif model_upper == "MACE":
         if not MACE_AVAILABLE:
             raise BackendUnavailableError(
                 "The MACE MLFF model could not be loaded (mace-torch is not installed).",
-                hint="Install mace-torch, or use run_xtb_calculation / optimize_geometry instead.",
+                hint="pip install ypotheto-compchem-mcp[mlff], or use run_xtb_calculation / optimize_geometry instead.",
             )
         try:
             return mace_off(default_dtype="float32")
         except Exception as e:
             raise BackendUnavailableError(
                 f"Failed to load MACE model: {str(e)}",
-                hint="Install mace-torch, or use run_xtb_calculation / optimize_geometry instead.",
+                hint="pip install ypotheto-compchem-mcp[mlff], or use run_xtb_calculation / optimize_geometry instead.",
             ) from e
 
     raise BackendUnavailableError(
@@ -73,7 +74,7 @@ def run_mlff_optimization_engine(
     molecule_id: str,
     model_name: str = "CHGNet",
     fmax: float = 0.05
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Optimize molecular or periodic structures using pre-trained Machine Learning Force Fields.
     """
@@ -90,8 +91,14 @@ def run_mlff_optimization_engine(
     name = f"MLFF Optimized {molecule_id} ({model_name})"
     
     import io
+
     from ase.io import write
-    from ypotheto_compchem_mcp.chemistry.builder_engine import save_molecule_coords, _get_molecules_dir, _load_index, _save_index
+
+    from ypotheto_compchem_mcp.chemistry.builder_engine import (
+        _get_molecules_dir,
+        _load_index,
+        _save_index,
+    )
     
     f_xyz = io.StringIO()
     write(f_xyz, atoms, format="xyz")
@@ -143,25 +150,20 @@ def run_mlff_molecular_dynamics_engine(
     timestep_fs: float = 1.0,
     temperature_k: float = 300.0,
     ensemble: str = "nvt"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run MD simulations driven by MLFF forces.
     """
     atoms = _load_structure(workspace_id, molecule_id)
     atoms.calc = _get_mlff_calculator(model_name)
     
-    from ase.md.langevin import Langevin
     from ase import units
-    import tempfile
-    import os
-    
-    temp_dir = tempfile.mkdtemp()
-    traj_path = os.path.join(temp_dir, "md.xyz")
-    
+    from ase.md.langevin import Langevin
+
     dyn = Langevin(atoms, timestep_fs * units.fs, temperature_K=temperature_k, friction=0.01)
     
-    traj_out = [f"{len(atoms)}", f"MLFF MD step 0"]
-    for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+    traj_out = [f"{len(atoms)}", "MLFF MD step 0"]
+    for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
         traj_out.append(f"{sym} {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}")
         
     n_chunks = 5
@@ -170,7 +172,7 @@ def run_mlff_molecular_dynamics_engine(
         dyn.run(chunk_steps)
         traj_out.append(f"{len(atoms)}")
         traj_out.append(f"MLFF MD step {(step_idx+1)*chunk_steps}")
-        for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+        for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
             traj_out.append(f"{sym} {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}")
             
     traj_content = "\n".join(traj_out)

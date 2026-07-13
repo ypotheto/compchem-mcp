@@ -1,21 +1,26 @@
 import logging
 import math
-from typing import Any, Dict, List, Optional
-from rdkit import Chem
+from typing import Any
+
 from ase import Atoms
 from ase.thermochemistry import IdealGasThermo
+from rdkit import Chem
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import (
     load_molecule_from_workspace,
-    save_molecule_coords
+    save_molecule_coords,
 )
 from ypotheto_compchem_mcp.chemistry.xtb_engine import (
+    CREST_AVAILABLE,
+    XTB_AVAILABLE,
     run_conformer_search_engine,
     run_xtb_calculation_engine,
-    XTB_AVAILABLE,
-    CREST_AVAILABLE
 )
-from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError, CompchemError
+from ypotheto_compchem_mcp.errors import (
+    BackendUnavailableError,
+    CalculationFailedError,
+    CompchemError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +31,11 @@ EV_TO_KCAL = 23.0609
 
 def compute_gibbs_correction(
     atoms: Atoms,
-    frequencies_cm1: List[float],
+    frequencies_cm1: list[float],
     spin: int = 1,
     T: float = 298.15,
     P: float = 101325.0
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """
     Calculate zero-point energy and Gibbs free energy thermal correction using ASE IdealGasThermo.
     """
@@ -69,13 +74,13 @@ def run_ensemble_thermochemistry_engine(
     workspace_id: str,
     molecule_id: str,
     method: str = "GFN2-xTB",
-    solvent: Optional[str] = None,
+    solvent: str | None = None,
     energy_window_kcal: float = 6.0,
     max_conformers_to_optimize: int = 5,
     energy_threshold_kcal: float = 3.0,
     charge: int = 0,
     spin: int = 1
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Ensemble Thermochemistry Pipeline:
     1. Generate conformers using CREST.
@@ -233,23 +238,63 @@ def run_ensemble_thermochemistry_engine(
         ensemble_gibbs_ev += r["boltzmann_population"] * r["total_gibbs_energy_ev"]
         del r["boltzmann_weight"]
         
+    # A full frequencies_cm1 list per conformer is unbounded (3N-6 per conformer,
+    # times however many conformers were refined). Write the full table
+    # (every conformer, every frequency) to a JSON artifact; inline results keep
+    # only summary stats per conformer, plus a first-20-frequency preview for
+    # the lowest-Gibbs conformer (the one most callers actually want next).
+    json_art = None
+    try:
+        import json
+
+        from ypotheto_compchem_mcp.artifacts import register_artifact
+        full_table_bytes = json.dumps(
+            {"molecule_id": molecule_id, "refined_conformers": refined_results}, indent=2
+        ).encode("utf-8")
+        json_art = register_artifact(
+            f"{molecule_id}_ensemble_thermochemistry.json",
+            full_table_bytes,
+            "report",
+            "Full per-conformer ensemble thermochemistry table (all frequencies)"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to generate ensemble thermochemistry JSON artifact: {str(e)}")
+
+    lowest = min(refined_results, key=lambda r: r["total_gibbs_energy_ev"])
+    conformers_summary = []
+    for r in refined_results:
+        freqs = r["frequencies_cm1"]
+        entry = {k: v for k, v in r.items() if k != "frequencies_cm1"}
+        entry["frequency_summary"] = {
+            "count": len(freqs),
+            "min_cm1": min(freqs) if freqs else None,
+            "max_cm1": max(freqs) if freqs else None
+        }
+        if r is lowest:
+            entry["frequencies_cm1_preview"] = freqs[:20]
+            entry["frequencies_truncated"] = len(freqs) > 20
+        conformers_summary.append(entry)
+
     results = {
         "molecule_id": molecule_id,
         "temperature_k": T,
         "ensemble_gibbs_free_energy_ev": round(ensemble_gibbs_ev, 6),
         "ensemble_gibbs_free_energy_kcal": round(ensemble_gibbs_ev * EV_TO_KCAL, 4),
-        "refined_conformers": refined_results
+        "refined_conformers": conformers_summary
     }
-    
+
     interpretation = (
         f"Ensemble thermochemistry pipeline completed for {molecule_id}.\n"
         f"Ensemble Gibbs Free Energy = {results['ensemble_gibbs_free_energy_kcal']} kcal/mol.\n"
         f"Refined {len(refined_results)} conformers.\n"
-        f"Lowest energy conformer relative Gibbs = 0.0 kcal/mol (Boltzmann pop: {refined_results[0]['boltzmann_population'] * 100:.1f}%)."
+        f"Lowest energy conformer relative Gibbs = 0.0 kcal/mol (Boltzmann pop: {refined_results[0]['boltzmann_population'] * 100:.1f}%).\n"
+        f"Full per-conformer frequency table (all {len(refined_results)} conformers) is in the attached JSON artifact; "
+        f"only the lowest-Gibbs conformer's first 20 frequencies are shown inline."
     )
-    
+
     return {
         "ok": True,
         "results": results,
-        "interpretation": interpretation
+        "interpretation": interpretation,
+        "artifacts": [json_art] if json_art else []
     }

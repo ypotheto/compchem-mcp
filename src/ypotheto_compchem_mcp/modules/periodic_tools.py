@@ -1,22 +1,23 @@
-from typing import List, Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
-from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.chemistry.periodic_engine import (
-    import_periodic_structure_engine,
-    analyze_crystal_symmetry_engine,
-    generate_supercell_engine,
-    build_surface_slab_engine,
     add_adsorbate_to_surface_engine,
-    run_periodic_dft_engine
+    analyze_crystal_symmetry_engine,
+    build_surface_slab_engine,
+    generate_supercell_engine,
+    import_periodic_structure_engine,
+    run_periodic_dft_engine,
 )
+from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 @mcp.tool()
 @mcp_tool_decorator
 def import_periodic_structure(
     cif_content: str,
-    name: Optional[str] = None
+    name: str | None = None
 ) -> dict:
     """
     Import a periodic crystal structure from a CIF file.
@@ -42,7 +43,8 @@ def import_periodic_structure(
     interpretation = (
         f"Successfully imported periodic structure {molecule_id} ({res['name']}). "
         f"Formula: {res['formula']}, Atoms in unit cell: {res['num_atoms']}. "
-        f"Lattice: a={res['lattice_parameters']['a']:.3f} Å, b={res['lattice_parameters']['b']:.3f} Å, c={res['lattice_parameters']['c']:.3f} Å. "
+        f"Lattice: a={res['lattice_parameters']['a']:.3f} Å, "
+        f"b={res['lattice_parameters']['b']:.3f} Å, c={res['lattice_parameters']['c']:.3f} Å. "
         f"Symmetry: Space Group {res['space_group']['symbol']} (Number {res['space_group']['number']})."
     )
     
@@ -93,8 +95,8 @@ def analyze_crystal_symmetry(
 @mcp_tool_decorator
 def generate_supercell(
     molecule_id: str,
-    sc_matrix: List[int],
-    name: Optional[str] = None
+    sc_matrix: list[int],
+    name: str | None = None
 ) -> dict:
     """
     Expand a unit cell periodic structure into a supercell.
@@ -140,7 +142,7 @@ def generate_supercell(
 @mcp_tool_decorator
 def build_surface_slab(
     bulk_molecule_id: str,
-    miller_indices: List[int],
+    miller_indices: list[int],
     layers: int,
     vacuum_size: float = 10.0
 ) -> dict:
@@ -231,7 +233,7 @@ def add_adsorbate_to_surface(
 @mcp_tool_decorator
 def run_periodic_dft(
     molecule_id: str,
-    kpts: List[int] = [1, 1, 1],
+    kpts: list[int] | None = None,
     method: str = "xTB",
     run_async: bool = True
 ) -> dict:

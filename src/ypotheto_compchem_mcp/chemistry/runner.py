@@ -2,7 +2,7 @@ import os
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Dict, Any
+
 
 class EngineRunResult:
     def __init__(self, return_code: int, stdout: str, stderr: str, log_file: Path):
@@ -17,8 +17,8 @@ class EngineRunner(ABC):
         self,
         workspace_dir: Path,
         job_id: str,
-        command: List[str],
-        input_files: Dict[str, str]
+        command: list[str],
+        input_files: dict[str, str]
     ) -> EngineRunResult:
         pass
 
@@ -28,8 +28,8 @@ class LocalSubprocessRunner(EngineRunner):
         self,
         workspace_dir: Path,
         job_id: str,
-        command: List[str],
-        input_files: Dict[str, str]
+        command: list[str],
+        input_files: dict[str, str]
     ) -> EngineRunResult:
         job_dir = workspace_dir / "jobs" / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
@@ -68,8 +68,8 @@ class DockerContainerRunner(EngineRunner):
         self,
         workspace_dir: Path,
         job_id: str,
-        command: List[str],
-        input_files: Dict[str, str]
+        command: list[str],
+        input_files: dict[str, str]
     ) -> EngineRunResult:
         job_dir = workspace_dir / "jobs" / job_id
         job_dir.mkdir(parents=True, exist_ok=True)

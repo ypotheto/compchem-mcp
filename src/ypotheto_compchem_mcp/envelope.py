@@ -1,13 +1,17 @@
+import functools
 import inspect
+import logging
 import time
 import traceback
-import functools
-import logging
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
+
 from pydantic import BaseModel
+
 from ypotheto_compchem_mcp import __version__
 from ypotheto_compchem_mcp.errors import CompchemError
+
 
 class WarningInfo(BaseModel):
     type: str
@@ -20,19 +24,19 @@ class ArtifactInfo(BaseModel):
 
 class ToolResponseEnvelope(BaseModel):
     ok: bool
-    results: Dict[str, Any]
-    warnings: List[WarningInfo] = []
+    results: dict[str, Any]
+    warnings: list[WarningInfo] = []
     interpretation: str
-    artifacts: List[ArtifactInfo] = []
-    meta: Dict[str, Any] = {}
+    artifacts: list[ArtifactInfo] = []
+    meta: dict[str, Any] = {}
 
 def make_success_response(
-    results: Dict[str, Any],
+    results: dict[str, Any],
     interpretation: str,
-    warnings: Optional[List[WarningInfo]] = None,
-    artifacts: Optional[List[ArtifactInfo]] = None,
-    meta: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+    warnings: list[WarningInfo] | None = None,
+    artifacts: list[ArtifactInfo] | None = None,
+    meta: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Helper to construct a successful response envelope."""
     envelope = ToolResponseEnvelope(
         ok=True,
@@ -49,10 +53,10 @@ def make_success_response(
 
 def build_provenance(
     software: str,
-    method: Optional[str] = None,
-    functional: Optional[str] = None,
-    basis: Optional[str] = None
-) -> Dict[str, Any]:
+    method: str | None = None,
+    functional: str | None = None,
+    basis: str | None = None
+) -> dict[str, Any]:
     """
     Build a `meta.provenance` dict recording which backend/version/method/basis
     actually produced a result, so a client can tell exactly how a number was
@@ -64,7 +68,7 @@ def build_provenance(
         version = importlib.metadata.version(software)
     except Exception:
         version = "unknown"
-    provenance: Dict[str, Any] = {"software": software, "version": version}
+    provenance: dict[str, Any] = {"software": software, "version": version}
     if method is not None:
         provenance["method"] = method
     if functional is not None:
@@ -76,8 +80,8 @@ def build_provenance(
 def make_error_response(
     code: str,
     message: str,
-    hint: Optional[str] = None
-) -> Dict[str, Any]:
+    hint: str | None = None
+) -> dict[str, Any]:
     """Helper to construct an error response envelope."""
     return {
         "ok": False,
@@ -120,9 +124,9 @@ def mcp_tool_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
         from ypotheto_compchem_mcp.usage import log_usage
         from ypotheto_compchem_mcp.utils.plotting import close_all_open_figures
+        from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 
         # 1. Quota Check
         workspace_id = get_workspace_id()

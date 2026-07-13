@@ -1,14 +1,22 @@
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ypotheto_compchem_mcp.chemistry._backend_checks import require_xtb_calculator
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 
 logger = logging.getLogger(__name__)
 
+try:
+    from sella import Sella
+    SELLA_AVAILABLE = True
+except ImportError:
+    SELLA_AVAILABLE = False
+
 def _load_atoms_from_xyz(workspace_id: str, molecule_id: str):
-    from ypotheto_compchem_mcp.workspace import workspace_manager
     from ase import Atoms
+
+    from ypotheto_compchem_mcp.workspace import workspace_manager
     workspace_dir = workspace_manager.get_workspace_dir(workspace_id)
     xyz_path = workspace_dir / "molecules" / f"{molecule_id}.xyz"
     if not xyz_path.exists():
@@ -32,12 +40,18 @@ def run_transition_state_search_engine(
     basis: str = "sto-3g",
     charge: int = 0,
     spin: int = 0
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Optimize transition state structure using Sella.
     """
+    if not SELLA_AVAILABLE:
+        raise BackendUnavailableError(
+            "Sella is not installed - required for transition-state saddle-point optimization.",
+            hint="pip install ypotheto-compchem-mcp[ts]"
+        )
+
     atoms = _load_atoms_from_xyz(workspace_id, molecule_id)
-    
+
     method_upper = method.upper()
     method_used = ""
     if method_upper == "XTB":
@@ -48,12 +62,11 @@ def run_transition_state_search_engine(
         atoms.calc = PySCFCalculator(method=method, functional=functional, basis=basis, charge=charge, spin=spin)
         method_used = f"{method.upper()}/{functional}/{basis}"
 
-    from sella import Sella
     opt = Sella(atoms, logfile=None)
     opt.run(fmax=0.05, steps=50)
     
     new_xyz_lines = [f"{len(atoms)}", "Transition State Optimized Geometry"]
-    for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+    for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
         new_xyz_lines.append(f"{sym} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}")
     new_xyz_block = "\n".join(new_xyz_lines)
     
@@ -94,7 +107,7 @@ def run_neb_calculation_engine(
     charge: int = 0,
     spin: int = 0,
     interpolation: str = "idpp"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Perform NEB path optimization between reactant and product states.
     """
@@ -136,7 +149,7 @@ def run_neb_calculation_engine(
     image_ids = []
     for idx, img in enumerate(images):
         new_xyz_lines = [f"{len(img)}", f"NEB Image {idx}"]
-        for sym, pos in zip(img.get_chemical_symbols(), img.get_positions()):
+        for sym, pos in zip(img.get_chemical_symbols(), img.get_positions(), strict=True):
             new_xyz_lines.append(f"{sym} {pos[0]:.6f} {pos[1]:.6f} {pos[2]:.6f}")
         new_xyz_block = "\n".join(new_xyz_lines)
         
@@ -160,8 +173,10 @@ def run_neb_calculation_engine(
         
     plot_art = None
     try:
-        import matplotlib.pyplot as plt
         import io
+
+        import matplotlib.pyplot as plt
+
         from ypotheto_compchem_mcp.artifacts import register_artifact
         
         plt.figure(figsize=(7, 4.5))

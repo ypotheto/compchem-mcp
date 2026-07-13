@@ -1,7 +1,8 @@
-import sys
 import json
+import sys
+
 import numpy as np
-from pyscf import gto, scf, grad
+from pyscf import gto, scf
 
 HARTREE_TO_EV = 27.211386245988
 BOHR_TO_ANGSTROM = 0.529177210903

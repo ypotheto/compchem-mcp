@@ -1,24 +1,39 @@
-from typing import Optional, List
-import os
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
-from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 from ypotheto_compchem_mcp.chemistry.polymer_engine import (
-    register_monomer_engine,
+    analyze_md_trajectory_engine,
     build_polymer_chain_engine,
     pack_amorphous_cell_engine,
+    register_monomer_engine,
     run_lammps_simulation_engine,
-    analyze_md_trajectory_engine
 )
+from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
+
+
+def _finalize_pack_amorphous_cell(res: dict) -> dict:
+    interpretation = (
+        f"Amorphous cell packed successfully: {res['packed_molecule_id']} ({res['name']}).\n"
+        f"Box Size = {res['box_size_angstrom']:.2f} A, Target Density = {res['density_g_cm3']:.2f} g/cm3, Total Atoms = {res['num_atoms']}."
+    )
+    return make_success_response(
+        results=res,
+        interpretation=interpretation,
+        meta={"packed_molecule_id": res["packed_molecule_id"]}
+    )
+
+def run_pack_amorphous_cell_job(workspace_id, molecule_ids, counts, density_g_cm3, box_size_angstrom):
+    res = pack_amorphous_cell_engine(workspace_id, molecule_ids, counts, density_g_cm3, box_size_angstrom)
+    return _finalize_pack_amorphous_cell(res)
 
 @mcp.tool()
 @mcp_tool_decorator
 def register_monomer(
     smiles: str,
     name: str,
-    head_idx: Optional[int] = None,
-    tail_idx: Optional[int] = None
+    head_idx: int | None = None,
+    tail_idx: int | None = None
 ) -> dict:
     """
     Register a monomer repeat unit, defining attachment connection points for polymer building.
@@ -57,7 +72,7 @@ def build_polymer_chain(
     monomer_id: str,
     dp: int,
     tacticity: str = "isotactic",
-    name: Optional[str] = None
+    name: str | None = None
 ) -> dict:
     """
     Assemble repeat units head-to-tail to form a 3D-relaxed polymer chain of specified length.
@@ -104,10 +119,10 @@ def build_polymer_chain(
 @mcp.tool()
 @mcp_tool_decorator
 def pack_amorphous_cell(
-    molecule_ids: List[str],
-    counts: List[int],
+    molecule_ids: list[str],
+    counts: list[int],
     density_g_cm3: float = 0.9,
-    box_size_angstrom: Optional[float] = None,
+    box_size_angstrom: float | None = None,
     run_async: bool = True
 ) -> dict:
     """
@@ -129,7 +144,7 @@ def pack_amorphous_cell(
     if run_async:
         job = job_manager.submit_job(
             workspace_id,
-            pack_amorphous_cell_engine,
+            run_pack_amorphous_cell_job,
             est_sec,
             workspace_id,
             molecule_ids,
@@ -146,18 +161,9 @@ def pack_amorphous_cell(
             },
             interpretation=f"Amorphous cell packing job submitted. Job ID: {job.job_id}."
         )
-        
+
     res = pack_amorphous_cell_engine(workspace_id, molecule_ids, counts, density_g_cm3, box_size_angstrom)
-    
-    interpretation = (
-        f"Amorphous cell packed successfully: {res['packed_molecule_id']} ({res['name']}).\n"
-        f"Box Size = {res['box_size_angstrom']:.2f} A, Target Density = {res['density_g_cm3']:.2f} g/cm3, Total Atoms = {res['num_atoms']}."
-    )
-    return make_success_response(
-        results=res,
-        interpretation=interpretation,
-        meta={"packed_molecule_id": res["packed_molecule_id"]}
-    )
+    return _finalize_pack_amorphous_cell(res)
 
 
 @mcp.tool()

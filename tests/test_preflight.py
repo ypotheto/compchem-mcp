@@ -1,10 +1,11 @@
-import pytest
 from rdkit import Chem
+
 from ypotheto_compchem_mcp.chemistry.preflight import (
-    validate_charge_spin_multiplicity,
+    estimate_computational_resources,
     validate_basis_set_coverage,
-    estimate_computational_resources
+    validate_charge_spin_multiplicity,
 )
+
 
 def test_charge_spin_parity():
     # Water (H2O) -> 10 electrons (Z=8 for O, Z=1 for each H)
@@ -80,8 +81,8 @@ def test_resource_estimation():
     assert est_opt["recommended_run_mode"] == "async"
 
 def test_preflight_mcp_tool():
-    from ypotheto_compchem_mcp.modules.scientific_preflight_tools import run_scientific_preflight
     from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
+    from ypotheto_compchem_mcp.modules.scientific_preflight_tools import run_scientific_preflight
     
     # Build water molecule in workspace
     res = build_molecule_from_smiles_engine("O")

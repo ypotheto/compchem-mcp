@@ -1,6 +1,8 @@
-import pytest
-from unittest.mock import MagicMock, patch
 import sys
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 
 @pytest.fixture(autouse=True)
 def mock_julia_and_cantera():
@@ -34,6 +36,7 @@ def mock_julia_and_cantera():
     
     with patch.dict(sys.modules, {"juliacall": mock_jl, "cantera": mock_ct}):
         import importlib
+
         import ypotheto_compchem_mcp.chemistry.thermo_engine as te
         import ypotheto_compchem_mcp.modules.thermo_tools as tt
         importlib.reload(te)
@@ -176,6 +179,35 @@ def test_run_reactor_kinetics_sync(mock_julia_and_cantera):
     assert "final_state" in results
     assert results["final_state"]["temperature"] == 1000.0
     assert results["final_state"]["pressure"] == 101325.0
+    assert results["truncated"] is False
+    assert len(results["times"]) == 10
+
+def test_run_reactor_kinetics_bounds_inline_output_for_large_steps(mock_julia_and_cantera):
+    te, tt = mock_julia_and_cantera
+
+    te.CANTERA_AVAILABLE = True
+    tt.CANTERA_AVAILABLE = True
+
+    res = tt.run_reactor_kinetics(
+        mechanism="gri30.yaml",
+        initial_state={"temperature": 1000.0, "pressure": 101325.0, "X": "CH4:1, O2:2, N2:7.52"},
+        reactor_type="batch",
+        residence_time_s=1.0,
+        steps=500,
+        run_async=False
+    )
+
+    assert res["ok"] is True
+    results = res["results"]
+    assert results["truncated"] is True
+    assert len(results["times"]) <= 200
+    assert len(results["temperatures"]) <= 200
+    assert len(results["pressures"]) <= 200
+    for series in results["species_mole_fractions"].values():
+        assert len(series) <= 200
+
+    csv_artifacts = [a for a in res["artifacts"] if a["url"].endswith(".csv")]
+    assert len(csv_artifacts) == 1
 
 def test_calculate_transport_properties(mock_julia_and_cantera):
     te, tt = mock_julia_and_cantera

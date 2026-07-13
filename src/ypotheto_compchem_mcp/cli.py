@@ -1,7 +1,8 @@
 import argparse
-import sys
 from pathlib import Path
+
 from ypotheto_compchem_mcp.config import settings
+
 
 def main():
     parser = argparse.ArgumentParser(description="Ypotheto Computational Chemistry MCP Server")

@@ -1,22 +1,28 @@
-from typing import List, Dict, Any, Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
-from ypotheto_compchem_mcp.errors import ValidationError, BackendUnavailableError
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.jobs import job_manager
+from typing import Any
+
 from ypotheto_compchem_mcp.chemistry.thermo_engine import (
+    CANTERA_AVAILABLE,
+    CLAPEYRON_AVAILABLE,
+    calculate_transport_properties_engine,
     run_mixture_flash_engine,
     run_reactor_kinetics_engine,
-    calculate_transport_properties_engine,
-    CLAPEYRON_AVAILABLE,
-    CANTERA_AVAILABLE
 )
+from ypotheto_compchem_mcp.envelope import (
+    make_error_response,
+    make_success_response,
+    mcp_tool_decorator,
+)
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, ValidationError
+from ypotheto_compchem_mcp.jobs import job_manager
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 @mcp.tool()
 @mcp_tool_decorator
 def run_mixture_flash(
-    components: List[str],
-    mole_fractions: List[float],
+    components: list[str],
+    mole_fractions: list[float],
     temperature_k: float,
     pressure_pa: float,
     model: str = "PC-SAFT",
@@ -39,7 +45,10 @@ def run_mixture_flash(
     if not CLAPEYRON_AVAILABLE:
         raise BackendUnavailableError(
             "Clapeyron.jl/juliacall is not available or Julia environment is not set up.",
-            hint="Install juliacall and Julia's Clapeyron package, or run inside the project's Docker image."
+            hint=(
+                "pip install ypotheto-compchem-mcp[thermo] (juliacall) plus the Julia "
+                "Clapeyron package, or run inside the project's Docker image."
+            )
         )
 
     if len(components) != len(mole_fractions):
@@ -88,7 +97,7 @@ def run_mixture_flash(
 @mcp_tool_decorator
 def run_reactor_kinetics(
     mechanism: str,
-    initial_state: Dict[str, Any],
+    initial_state: dict[str, Any],
     reactor_type: str = "batch",
     residence_time_s: float = 1.0,
     steps: int = 100,
@@ -109,7 +118,7 @@ def run_reactor_kinetics(
     if not CANTERA_AVAILABLE:
         raise BackendUnavailableError(
             "Cantera is not available on this host.",
-            hint="Install cantera, or run inside the project's Docker image which includes it."
+            hint="pip install ypotheto-compchem-mcp[thermo], or run inside the project's Docker image which includes it."
         )
 
     workspace_id = get_workspace_id()
@@ -149,8 +158,8 @@ def run_reactor_kinetics(
 @mcp.tool()
 @mcp_tool_decorator
 def calculate_transport_properties(
-    components: List[str],
-    mole_fractions: List[float],
+    components: list[str],
+    mole_fractions: list[float],
     temperature_k: float,
     pressure_pa: float,
     model: str = "Cantera"

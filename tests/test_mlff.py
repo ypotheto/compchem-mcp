@@ -1,15 +1,17 @@
-import pytest
 from unittest.mock import patch
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
+
+import pytest
+
 from ypotheto_compchem_mcp.chemistry.mlff_engine import (
+    run_mlff_molecular_dynamics_engine,
     run_mlff_optimization_engine,
-    run_mlff_molecular_dynamics_engine
 )
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.modules.mlff_tools import (
+    run_mlff_molecular_dynamics,
     run_mlff_optimization,
-    run_mlff_molecular_dynamics
 )
+from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
 def test_mlff_optimization_and_md():
@@ -53,7 +55,8 @@ def test_mlff_optimization_and_md():
         assert opt_tool["ok"] is True
 
         md_tool = run_mlff_molecular_dynamics(
-            opt_tool["results"]["optimized_molecule_id"], model_name="MACE", steps=10, timestep_fs=0.5, temperature_k=100.0, ensemble="nvt", run_async=False
+            opt_tool["results"]["optimized_molecule_id"], model_name="MACE", steps=10, timestep_fs=0.5,
+            temperature_k=100.0, ensemble="nvt", run_async=False
         )
         assert md_tool["ok"] is True
         assert "trajectory_file_url" in md_tool["results"]

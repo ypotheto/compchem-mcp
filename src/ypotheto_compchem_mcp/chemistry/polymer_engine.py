@@ -1,29 +1,37 @@
+import importlib.util
 import json
 import logging
-import uuid
 import os
 import shutil
 import subprocess
 import tempfile
-import numpy as np
+import uuid
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
+import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem.rdMolDescriptors import CalcMolFormula
+from scipy.spatial.transform import Rotation
 
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    save_molecule_coords,
+)
 from ypotheto_compchem_mcp.workspace import workspace_manager
-from ypotheto_compchem_mcp.chemistry.builder_engine import _get_molecules_dir, _load_index, _save_index, save_molecule_coords
 
 logger = logging.getLogger(__name__)
 
 # Check binary availability
 PACKMOL_AVAILABLE = bool(shutil.which("packmol"))
-LAMMPS_AVAILABLE = bool(shutil.which("lammps") or shutil.which("lmp") or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes"))
+LAMMPS_AVAILABLE = bool(
+    shutil.which("lammps") or shutil.which("lmp")
+    or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes")
+)
 
 
-def _parse_lammps_thermo_lines(lines: Iterable[str]) -> Optional[Dict[str, float]]:
+def _parse_lammps_thermo_lines(lines: Iterable[str]) -> dict[str, float] | None:
     """
     Parse the final thermo row from LAMMPS output lines produced by
     `thermo_style custom step temp press pe ke etotal density`, which LAMMPS
@@ -77,27 +85,27 @@ def _parse_lammps_thermo_lines(lines: Iterable[str]) -> Optional[Dict[str, float
         return None
 
 
-def _parse_lammps_thermo_log(log_text: str) -> Optional[Dict[str, float]]:
+def _parse_lammps_thermo_log(log_text: str) -> dict[str, float] | None:
     """Parse the final thermo row from a LAMMPS log held in memory as a string."""
     return _parse_lammps_thermo_lines(log_text.splitlines())
 
 
-def _parse_lammps_thermo_log_file(log_path: str) -> Optional[Dict[str, float]]:
+def _parse_lammps_thermo_log_file(log_path: str) -> dict[str, float] | None:
     """
     Parse the final thermo row from a LAMMPS log file on disk, streaming it
     line-by-line rather than reading it into memory as a single string.
     """
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, encoding="utf-8") as f:
             return _parse_lammps_thermo_lines(f)
     except FileNotFoundError:
         return None
 
-try:
-    import MDAnalysis as mda
-    MDANALYSIS_AVAILABLE = True
-except ImportError:
-    MDANALYSIS_AVAILABLE = False
+# MDAnalysis is never actually imported/used elsewhere in this module (only its
+# presence is checked) - analyze_md_trajectory_engine below does its own
+# numpy-based RDF/RMSD/MSD parsing. Check availability without importing the
+# (heavy, optional) package itself.
+MDANALYSIS_AVAILABLE = importlib.util.find_spec("MDAnalysis") is not None
 
 def _get_monomers_dir(workspace_id: str) -> Path:
     """Get the monomers directory for the workspace."""
@@ -109,7 +117,7 @@ def _get_monomer_index_file(workspace_id: str) -> Path:
     """Get the index file path for monomers."""
     return _get_monomers_dir(workspace_id) / "index.json"
 
-def _load_monomer_index(workspace_id: str) -> Dict[str, Any]:
+def _load_monomer_index(workspace_id: str) -> dict[str, Any]:
     """Load the monomer index from disk."""
     index_file = _get_monomer_index_file(workspace_id)
     if not index_file.exists():
@@ -119,7 +127,7 @@ def _load_monomer_index(workspace_id: str) -> Dict[str, Any]:
     except Exception:
         return {}
 
-def _save_monomer_index(workspace_id: str, index: Dict[str, Any]):
+def _save_monomer_index(workspace_id: str, index: dict[str, Any]):
     """Save the monomer index to disk."""
     index_file = _get_monomer_index_file(workspace_id)
     index_file.write_text(json.dumps(index, indent=2), encoding="utf-8")
@@ -128,9 +136,9 @@ def register_monomer_engine(
     workspace_id: str,
     smiles: str,
     name: str,
-    head_idx: Optional[int] = None,
-    tail_idx: Optional[int] = None
-) -> Dict[str, Any]:
+    head_idx: int | None = None,
+    tail_idx: int | None = None
+) -> dict[str, Any]:
     """
     Register a monomer repeat unit, setting up attachment points [1*] (head) and [2*] (tail).
     """
@@ -198,8 +206,8 @@ def build_polymer_chain_engine(
     monomer_id: str,
     dp: int,
     tacticity: str = "isotactic",
-    name: Optional[str] = None
-) -> Dict[str, Any]:
+    name: str | None = None
+) -> dict[str, Any]:
     """
     Build a polymer chain of degree of polymerization (DP) by connecting registered
     monomer repeat units head-to-tail, minimizing the 3D cell, and saving it.
@@ -216,7 +224,7 @@ def build_polymer_chain_engine(
     rxn = AllChem.ReactionFromSmarts("[*:1]-[2*].[1*]-[*:2]>>[*:1]-[*:2]")
     
     chain = Chem.Mol(monomer)
-    for step in range(dp - 1):
+    for _step in range(dp - 1):
         products = rxn.RunReactants((chain, monomer))
         if not products or not products[0]:
             raise RuntimeError("Polymerization connection failed. Verify monomer head/tail attachment points.")
@@ -250,8 +258,8 @@ def build_polymer_chain_engine(
         method = "UFF"
 
     # 4. Export SVG
-    from rdkit.Chem.Draw import rdMolDraw2D
     from rdkit.Chem import rdDepictor
+    from rdkit.Chem.Draw import rdMolDraw2D
     mol_2d = Chem.Mol(capped)
     rdDepictor.Compute2DCoords(mol_2d)
     drawer = rdMolDraw2D.MolDraw2DSVG(400, 300)
@@ -294,11 +302,11 @@ def build_polymer_chain_engine(
 
 def pack_amorphous_cell_engine(
     workspace_id: str,
-    molecule_ids: List[str],
-    counts: List[int],
+    molecule_ids: list[str],
+    counts: list[int],
     density_g_cm3: float = 0.9,
-    box_size_angstrom: Optional[float] = None
-) -> Dict[str, Any]:
+    box_size_angstrom: float | None = None
+) -> dict[str, Any]:
     """
     Pack structures into a periodic simulation cell. Use packmol if available,
     otherwise fallback to a simple geometric packing algorithm.
@@ -314,7 +322,7 @@ def pack_amorphous_cell_engine(
     # Estimate box size if not provided
     if box_size_angstrom is None:
         total_mw = 0.0
-        for xyz_text, count in zip(xyz_contents, counts):
+        for xyz_text, count in zip(xyz_contents, counts, strict=True):
             lines = xyz_text.strip().split("\n")
             if len(lines) < 3:
                 continue
@@ -344,7 +352,7 @@ def pack_amorphous_cell_engine(
                 "output packed.xyz",
                 ""
             ]
-            for idx, (xyz_text, count) in enumerate(zip(xyz_contents, counts)):
+            for idx, (xyz_text, count) in enumerate(zip(xyz_contents, counts, strict=True)):
                 xyz_path = os.path.join(temp_dir, f"struct_{idx}.xyz")
                 with open(xyz_path, "w", encoding="utf-8") as f:
                     f.write(xyz_text)
@@ -365,7 +373,7 @@ def pack_amorphous_cell_engine(
             
             packed_path = os.path.join(temp_dir, "packed.xyz")
             if os.path.exists(packed_path):
-                with open(packed_path, "r", encoding="utf-8") as f:
+                with open(packed_path, encoding="utf-8") as f:
                     packed_xyz = f.read()
         except Exception as e:
             logger.warning(f"Packmol run failed: {str(e)}. Falling back to python packing.")
@@ -375,11 +383,10 @@ def pack_amorphous_cell_engine(
     if not packed_xyz:
         # Simple Python Fallback Packing
         packed_atoms = []
-        for idx, (xyz_text, count) in enumerate(zip(xyz_contents, counts)):
+        for xyz_text, count in zip(xyz_contents, counts, strict=True):
             lines = xyz_text.strip().split("\n")
             if len(lines) < 3:
                 continue
-            natoms = int(lines[0])
             coords = []
             for line in lines[2:]:
                 parts = line.split()
@@ -390,15 +397,13 @@ def pack_amorphous_cell_engine(
             center = np.mean(c_arr, axis=0)
             c_arr_centered = c_arr - center
             
-            for c in range(count):
+            for _c in range(count):
                 pos = np.random.rand(3) * (box_size_angstrom - 4.0) + 2.0
-                theta = np.random.rand() * 2.0 * np.pi
-                phi = np.random.rand() * np.pi
-                rot_matrix = np.array([
-                    [np.cos(theta), -np.sin(theta), 0],
-                    [np.sin(theta), np.cos(theta), 0],
-                    [0, 0, 1]
-                ])
+                # A uniformly random 3D orientation, not just a random rotation
+                # about one fixed axis (the previous code computed a polar
+                # angle `phi` but never applied it - every molecule ended up
+                # rotated only about Z, biasing the packing).
+                rot_matrix = Rotation.random().as_matrix()
                 rot_coords = np.dot(c_arr_centered, rot_matrix) + pos
                 for i, (sym, _, _, _) in enumerate(coords):
                     packed_atoms.append((sym, rot_coords[i][0], rot_coords[i][1], rot_coords[i][2]))
@@ -444,7 +449,7 @@ def run_lammps_simulation_engine(
     temperature_k: float = 300.0,
     pressure_atm: float = 1.0,
     ensemble: str = "npt"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run classical MD simulation in LAMMPS. If not available, run using ASE fallback.
     """
@@ -466,7 +471,7 @@ def run_lammps_simulation_engine(
     pot_energy = None
     final_density = None
     engine_used = None
-    warnings: List[Dict[str, str]] = []
+    warnings: list[dict[str, str]] = []
 
     if LAMMPS_AVAILABLE:
         temp_dir = tempfile.mkdtemp()
@@ -520,7 +525,7 @@ def run_lammps_simulation_engine(
                 f"timestep {timestep_fs}",
                 "thermo 100",
                 "thermo_style custom step temp press pe ke etotal density",
-                f"dump traj all xyz 100 trajectory.xyz",
+                "dump traj all xyz 100 trajectory.xyz",
                 "run 0"
             ])
             if ensemble.lower() == "npt":
@@ -535,7 +540,10 @@ def run_lammps_simulation_engine(
             with open(os.path.join(temp_dir, "sim.in"), "w", encoding="utf-8") as f:
                 f.write("\n".join(in_lines))
                 
-            lmp_bin = shutil.which("lammps") or shutil.which("lmp") or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes")
+            lmp_bin = (
+                shutil.which("lammps") or shutil.which("lmp")
+                or shutil.which("lmp_serial") or shutil.which("lmp_mpi") or shutil.which("lmp_aes")
+            )
             log_path = os.path.join(temp_dir, "lammps.log")
             with open(log_path, "w", encoding="utf-8") as log_f:
                 subprocess.run(
@@ -545,7 +553,7 @@ def run_lammps_simulation_engine(
 
             traj_path = os.path.join(temp_dir, "trajectory.xyz")
             if os.path.exists(traj_path):
-                with open(traj_path, "r", encoding="utf-8") as f:
+                with open(traj_path, encoding="utf-8") as f:
                     traj_content = f.read()
                 engine_used = "lammps"
                 thermo = _parse_lammps_thermo_log_file(log_path)
@@ -572,10 +580,9 @@ def run_lammps_simulation_engine(
         # ASE Fallback Simulation - uses a generic Lennard-Jones potential, NOT LAMMPS.
         # This produces a plausible-looking trajectory for pipeline/plumbing purposes only;
         # the energies and densities below are not physically meaningful for the requested system.
-        from ase import Atoms
+        from ase import Atoms, units
         from ase.calculators.lj import LennardJones
         from ase.md.langevin import Langevin
-        from ase import units
 
         symbols = []
         positions = []
@@ -590,15 +597,15 @@ def run_lammps_simulation_engine(
 
         dyn = Langevin(atoms, timestep_fs * units.fs, temperature_K=temperature_k, friction=0.01)
 
-        traj_out = [f"{len(atoms)}", f"ASE trajectory step 0"]
-        for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+        traj_out = [f"{len(atoms)}", "ASE trajectory step 0"]
+        for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
             traj_out.append(f"{sym} {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}")
 
         for _ in range(5):
             dyn.run(steps // 5)
             traj_out.append(f"{len(atoms)}")
             traj_out.append(f"ASE trajectory step {_}")
-            for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+            for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
                 traj_out.append(f"{sym} {pos[0]:.4f} {pos[1]:.4f} {pos[2]:.4f}")
 
         traj_content = "\n".join(traj_out)
@@ -657,7 +664,7 @@ def run_lammps_simulation_engine(
 def analyze_md_trajectory_engine(
     workspace_id: str,
     trajectory_xyz: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Parse packed cell MD trajectory and calculate Radius of Gyration (Rg), RDF, and MSD.
     """

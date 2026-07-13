@@ -1,27 +1,30 @@
 import io
+import logging
 import re
 import uuid
-import logging
+from typing import Any
+
 import numpy as np
 import spglib
-from typing import Any, Dict, List, Optional, Tuple
-
 from ase import Atoms
-from ase.io import read, write
 from ase.build import make_supercell
+from ase.io import read, write
 
-from ypotheto_compchem_mcp.workspace import workspace_manager
-from ypotheto_compchem_mcp.chemistry.builder_engine import _get_molecules_dir, _load_index, _save_index
-from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 from ypotheto_compchem_mcp.chemistry._backend_checks import require_xtb_calculator
+from ypotheto_compchem_mcp.chemistry.builder_engine import (
+    _get_molecules_dir,
+    _load_index,
+    _save_index,
+)
+from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 
 logger = logging.getLogger(__name__)
 
 def import_periodic_structure_engine(
     workspace_id: str,
     cif_content: str,
-    name: Optional[str] = None
-) -> Dict[str, Any]:
+    name: str | None = None
+) -> dict[str, Any]:
     """
     Parse a CIF string, convert it to an ASE Atoms object, calculate crystal
     symmetry properties via spglib, and store it in the workspace directory.
@@ -32,7 +35,7 @@ def import_periodic_structure_engine(
         atoms = read(f, format="cif")
     except Exception as e:
         logger.error(f"Failed to parse CIF contents: {str(e)}")
-        raise ValueError(f"Failed to parse CIF contents: {str(e)}")
+        raise ValueError(f"Failed to parse CIF contents: {str(e)}") from e
 
     # Ensure system is periodic
     atoms.pbc = [True, True, True]
@@ -123,7 +126,7 @@ def load_periodic_structure_engine(workspace_id: str, molecule_id: str) -> Atoms
         raise FileNotFoundError(f"Periodic structure {molecule_id} coordinates (.cif) not found in workspace.")
     return read(str(cif_path), format="cif")
 
-def analyze_crystal_symmetry_engine(workspace_id: str, molecule_id: str) -> Dict[str, Any]:
+def analyze_crystal_symmetry_engine(workspace_id: str, molecule_id: str) -> dict[str, Any]:
     """
     Get detailed crystallographic symmetry dataset via spglib for a stored structure.
     """
@@ -161,9 +164,9 @@ def analyze_crystal_symmetry_engine(workspace_id: str, molecule_id: str) -> Dict
 def generate_supercell_engine(
     workspace_id: str,
     molecule_id: str,
-    sc_matrix: List[int],
-    name: Optional[str] = None
-) -> Dict[str, Any]:
+    sc_matrix: list[int],
+    name: str | None = None
+) -> dict[str, Any]:
     """
     Build a supercell expansion using a scaling matrix and save it back to the workspace.
     Supports either diagonal scaling [nx, ny, nz] or a full 3x3 expansion matrix.
@@ -184,7 +187,7 @@ def generate_supercell_engine(
     try:
         super_atoms = make_supercell(atoms, P)
     except Exception as e:
-        raise RuntimeError(f"ASE supercell generation failed: {str(e)}")
+        raise RuntimeError(f"ASE supercell generation failed: {str(e)}") from e
 
     # Recalculate spacegroup for the supercell
     super_cell = (super_atoms.get_cell(), super_atoms.get_scaled_positions(), super_atoms.get_atomic_numbers())
@@ -263,10 +266,10 @@ def generate_supercell_engine(
 def build_surface_slab_engine(
     workspace_id: str,
     bulk_molecule_id: str,
-    miller_indices: List[int],
+    miller_indices: list[int],
     layers: int,
     vacuum_size: float = 10.0
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Build a surface slab from bulk periodic structure.
     """
@@ -335,7 +338,7 @@ def add_adsorbate_to_surface_engine(
     adsorbate_molecule_id: str,
     height: float = 1.5,
     position_type: str = "ontop"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Add adsorbate molecule onto a surface slab.
     """
@@ -422,9 +425,9 @@ def add_adsorbate_to_surface_engine(
 def run_periodic_dft_engine(
     workspace_id: str,
     molecule_id: str,
-    kpts: List[int] = [1, 1, 1],
+    kpts: list[int] | None = None,
     method: str = "xTB"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run periodic DFT calculation (or GFN-xTB PBC calculation).
 
@@ -436,6 +439,9 @@ def run_periodic_dft_engine(
     as None rather than presented as a native Hartree value, since it would
     otherwise just be a unit-converted copy of `energy_ev`.
     """
+    if kpts is None:
+        kpts = [1, 1, 1]
+
     atoms = load_periodic_structure_engine(workspace_id, molecule_id)
 
     method_upper = method.upper()
@@ -449,7 +455,7 @@ def run_periodic_dft_engine(
         method_used = "GFN2-xTB (periodic)"
     else:
         try:
-            from pyscf.pbc import gto, dft
+            from pyscf.pbc import dft, gto
         except ImportError as e:
             raise BackendUnavailableError(
                 f"PySCF (with PBC support) is not installed: {str(e)}",
@@ -459,7 +465,7 @@ def run_periodic_dft_engine(
         try:
             cell = gto.Cell()
             cell.atom = []
-            for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions()):
+            for sym, pos in zip(atoms.get_chemical_symbols(), atoms.get_positions(), strict=True):
                 cell.atom.append([sym, pos])
             cell.a = atoms.get_cell().tolist()
             cell.basis = "gth-szv"
@@ -492,7 +498,10 @@ def run_periodic_dft_engine(
     if energy_hartree_native is not None:
         energy_note = f" ({energy_hartree_native:.6f} Hartree, native SCF units)."
     else:
-        energy_note = " (Hartree not reported: xTB computes natively in eV via ASE, so a back-converted value would not reflect a native atomic-unit quantity)."
+        energy_note = (
+            " (Hartree not reported: xTB computes natively in eV via ASE, "
+            "so a back-converted value would not reflect a native atomic-unit quantity)."
+        )
 
     interpretation = (
         f"Periodic calculation completed successfully using {method}.\n"

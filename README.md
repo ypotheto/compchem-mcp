@@ -33,19 +33,67 @@ This project uses **`uv`** for virtualenv and dependency management.
 *   *Note: Heavy dependencies (like PySCF, Packmol, LAMMPS) have robust fallback mechanisms in the code. If a binary is missing or incompatible on a specific platform, the server automatically routes calculations to classical/semi-empirical fallbacks, ensuring portability.*
 
 ### 2. Install Dependencies
+
+Heavy backends are optional extras, not hard dependencies - a core-only install
+starts the server and serves the RDKit/ASE tool subset (molecule building,
+cheminformatics, descriptors). Any tool whose backend isn't installed returns a
+`BACKEND_UNAVAILABLE` error naming the exact extra to add.
+
 ```bash
 # Clone the repository
 git clone <repo-url>
 cd compchem-mcp
 
-# Create virtual environment and install dependencies
+# Create virtual environment
 uv venv
+
+# Core install only (RDKit/ASE tools)
 uv pip install -e .
+
+# ...or pick the extras you need:
+uv pip install -e ".[qm]"       # PySCF ab initio DFT/HF (+ cclib log parsing)
+uv pip install -e ".[mlff]"     # CHGNet / MACE machine-learned force fields
+uv pip install -e ".[thermo]"   # Cantera + Clapeyron.jl (via juliacall)
+uv pip install -e ".[md]"       # MDAnalysis trajectory post-processing
+uv pip install -e ".[ts]"       # Sella transition-state optimization
+uv pip install -e ".[db]"       # PostgreSQL-backed durable job queue
+uv pip install -e ".[s3]"       # DigitalOcean Spaces (S3-compatible) storage
+uv pip install -e ".[all]"      # everything above
+
+# Development tooling (ruff, mypy, pytest, moto)
+uv pip install -e ".[dev]"
 ```
+
+`xtb`, `CREST`, `Packmol`, and `LAMMPS` are external binaries, not pip
+packages - the server auto-detects them via `shutil.which` and falls back
+gracefully (or raises `BACKEND_UNAVAILABLE`) when they're missing. The
+[Dockerfile](Dockerfile) installs all of the above, plus these binaries and a
+Julia + Clapeyron.jl environment, and is the canonical way to get every
+backend available at once.
 
 ### 3. Run the Tests
 ```bash
 .\.venv\Scripts\python.exe -m pytest
+```
+
+Every heavy backend is mocked in the default test run above, so it never
+verifies a single *real* calculation. A separate `@pytest.mark.integration`
+tier (`tests/test_integration.py`) runs actual xtb/PySCF/CREST/Packmol/LAMMPS
+calculations and checks results against known reference values (e.g. GFN2-xTB
+water ≈ -5.070 Ha, HF/STO-3G water ≈ -74.96 Ha) - each test auto-skips if its
+backend isn't installed, so it's safe to run anywhere:
+
+```bash
+pytest -m integration
+```
+
+Since most dev machines won't have every binary installed, the project Docker
+image is the canonical venue for the full integration suite (it installs
+everything - see below):
+
+```bash
+docker build --target test -t ypotheto-compchem-mcp:test .
+docker run --rm ypotheto-compchem-mcp:test
 ```
 
 ### 4. Run the Server
@@ -115,37 +163,60 @@ To connect a remote client over streamable HTTP with Bearer token authentication
 | `COMPCHEM_API_TOKEN` | Bearer token required for authentication | `""` (Disabled) |
 | `COMPCHEM_DATA_DIR` | Directory on disk to store molecule structures and artifacts | `~/.compchem-mcp` |
 | `COMPCHEM_PORT` | Port to run the HTTP/SSE server | `8348` |
-| `COMPCHEM_PUBLIC_BASE_URL` | Base URL used to prefix artifact download links | `http://localhost:8348` |
+| `COMPCHEM_PUBLIC_BASE_URL` | Base URL used to prefix artifact download links; also used to derive the allowed `Host` for DNS-rebinding protection | `http://localhost:8348` |
+| `COMPCHEM_ALLOWED_ORIGINS` | Comma-separated CORS allowlist. Empty means no CORS headers at all (same-origin only) | `""` (none) |
+| `COMPCHEM_REQUEST_TIMEOUT_SECONDS` | Hard timeout for a single POST tool-call request before returning `504`; never applies to GET (health check, artifact download, streamable-HTTP push) | `120` |
+| `COMPCHEM_ARTIFACT_URL_EXPIRY_SECONDS` | Lifetime of a signed artifact download URL (`?exp=&sig=`) before it expires | `604800` (7 days) |
+| `COMPCHEM_DATABASE_URL` | PostgreSQL connection string for the durable job queue and molecule archive (requires the `[db]` extra). Unset falls back to a local thread pool + on-disk job state | `""` (disabled) |
+| `COMPCHEM_SPACES_BUCKET` / `_ENDPOINT` / `_KEY` / `_SECRET` / `_REGION` / `_PREFIX` | DigitalOcean Spaces (S3-compatible) storage backend for artifacts (requires the `[s3]` extra). Unset falls back to local disk storage | unset (local disk) |
 
 ---
 
 ## Tool Catalog Overview
 
+Generated from the actual tool registrations - regenerate with
+`python scripts/gen_tool_catalog.py` (pipe into this section) whenever tools
+are added or removed, so this table can't silently drift out of sync again.
+
 | Tool Name | Parameters | Description |
 | :--- | :--- | :--- |
-| `ping` | None | Verify server connectivity. |
-| `build_molecule_from_smiles` | `smiles`, `name` | Create a 3D model and 2D diagram from SMILES. |
-| `get_3d_coordinates` | `molecule_id`, `format` | Export XYZ or SDF molecular coordinates. |
-| `calculate_descriptors` | `molecule_id` | Compute MW, LogP, TPSA, and Lipinski filter. |
-| `estimate_calculation_time` | `molecule_id`, `method`, `basis` | Estimate duration of a calculation. |
-| `run_single_point` | `molecule_id`, `method`, ... | Run DFT/HF energy, HOMO/LUMO, and dipole moments. |
-| `optimize_geometry` | `molecule_id`, `method`, ... | Relax molecular coordinates. |
-| `calculate_vibrations` | `molecule_id`, `method`, ... | Run frequency analysis and thermochemical corrections. |
-| `simulate_ir_spectrum` | `molecule_id`, `method`, ... | Simulates vibrational IR spectrum plot. |
-| `run_molecular_dynamics` | `molecule_id`, `steps`, ... | Run Langevin or Verlet molecular dynamics. |
-| `run_xtb_calculation` | `molecule_id`, `method`, ... | Run GFN-xTB calculations. |
-| `run_conformer_search` | `molecule_id`, `method`, ... | Run CREST conformer ensemble searches. |
-| `run_ensemble_thermochemistry`| `molecule_id`, `method`, ... | Evaluates conformer ensemble-averaged free energies. |
-| `run_mixture_flash` | `compounds`, `fractions`, ... | Run phase equilibrium and flash calculations (Clapeyron). |
-| `run_reactor_kinetics` | `species`, `reactor_type`, ... | Model reactor kinetic networks (Cantera). |
-| `pack_amorphous_cell` | `compounds`, `density`, ... | Pack molecules into periodic cells (Packmol). |
-| `run_lammps_simulation` | `molecule_id`, `steps`, ... | Run classical periodic molecular dynamics (LAMMPS). |
-| `analyze_md_trajectory` | `trajectory_url`, `analysis_type` | Post-process trajectory files (MDAnalysis). |
-| `run_transition_state_search` | `molecule_id`, `method`, ... | Optimize reaction saddle-point transition states (Sella). |
-| `run_neb_calculation` | `initial_id`, `final_id`, ... | Optimize reaction pathway and barrier (ASE NEB). |
-| `build_surface_slab` | `bulk_molecule_id`, ... | Slice bulk crystals into surface slabs (ASE). |
-| `add_adsorbate_to_surface` | `slab_id`, `adsorbate_id`, ... | Place adsorbates onto surfaces (ASE). |
-| `run_periodic_dft` | `molecule_id`, `kpts`, ... | Perform periodic boundary DFT or xTB calculations. |
-| `run_mlff_optimization` | `molecule_id`, `model_name` | Optimize structures using pre-trained MLFFs (CHGNet/MACE). |
-| `run_mlff_molecular_dynamics` | `molecule_id`, `model_name` | Run MD simulations using MLFF force fields. |
-| `get_job_status` | `job_id` | Poll background calculation status and get results. |
+| `add_adsorbate_to_surface` | `slab_molecule_id`, `adsorbate_molecule_id`, `height`, ... | Place a non-periodic adsorbate molecule onto a periodic surface slab. |
+| `analyze_crystal_symmetry` | `molecule_id` | Perform deep crystallographic symmetry and space group analysis for a stored structure. |
+| `analyze_md_trajectory` | `trajectory_file_id` | Analyze MD trajectory XYZ file to compute Radius of Gyration, RDF, and MSD. |
+| `build_molecule_from_smiles` | `smiles`, `name` | Generate optimized 3D coordinates from a SMILES representation. |
+| `build_polymer_chain` | `monomer_id`, `dp`, `tacticity`, ... | Assemble repeat units head-to-tail to form a 3D-relaxed polymer chain of specified length. |
+| `build_surface_slab` | `bulk_molecule_id`, `miller_indices`, `layers`, ... | Generate a surface slab from bulk periodic crystal structure. |
+| `calculate_descriptors` | `molecule_id` | Calculate molecular properties (descriptors) and Lipinski's Rule of Five compliance. |
+| `calculate_hsp` | `molecule_id` | Calculate the Hansen Solubility Parameters (HSP) and Cohesive Energy Density (CED) for a stored molecule using the Hoftyzer-Van Krevelen (HVK) group contribution method. |
+| `calculate_hsp_distance` | `molecule_id_1`, `molecule_id_2` | Calculate the Hansen Solubility Parameter (HSP) distance (Ra) between two stored molecules. |
+| `calculate_transport_properties` | `components`, `mole_fractions`, `temperature_k`, ... | Calculate viscosity, thermal conductivity, and binary diffusion coefficients. |
+| `calculate_vibrations` | `molecule_id`, `method`, `functional`, ... | Run vibrational frequency analysis and calculate thermochemistry corrections. |
+| `enumerate_tautomers` | `molecule_id` | Enumerate all tautomeric forms for a stored molecule. |
+| `estimate_calculation_time` | `molecule_id`, `method`, `basis` | Estimate the execution time for a quantum chemistry calculation before running it. |
+| `generate_supercell` | `molecule_id`, `sc_matrix`, `name` | Expand a unit cell periodic structure into a supercell. |
+| `get_3d_coordinates` | `molecule_id`, `format` | Retrieve coordinate contents (SDF, XYZ, or PDB) of a stored molecule. |
+| `get_job_status` | `job_id` | Check progress or fetch results of a background calculation job. |
+| `import_periodic_structure` | `cif_content`, `name` | Import a periodic crystal structure from a CIF file. |
+| `optimize_geometry` | `molecule_id`, `method`, `functional`, ... | Relax molecule coordinates using ASE LBFGS optimizer coupled with PySCF energy/gradients. |
+| `pack_amorphous_cell` | `molecule_ids`, `counts`, `density_g_cm3`, ... | Pack polymer chains and solvent molecules into a periodic box using Packmol. |
+| `ping` | None | Check if the Ypotheto Computational Chemistry MCP Server is responsive. |
+| `register_monomer` | `smiles`, `name`, `head_idx`, ... | Register a monomer repeat unit, defining attachment connection points for polymer building. |
+| `run_conformer_search` | `molecule_id`, `method`, `solvent`, ... | Generate conformer ensembles using CREST (Conformer-Rotamer Ensemble Sampling Tool). |
+| `run_ensemble_thermochemistry` | `molecule_id`, `method`, `solvent`, ... | Run the Ensemble Thermochemistry Pipeline (enumerate -> optimize -> frequency-check -> Boltzmann rank). |
+| `run_lammps_simulation` | `packed_molecule_id`, `steps`, `timestep_fs`, ... | Run classical MD simulation in LAMMPS (or ASE fallback). |
+| `run_mixture_flash` | `components`, `mole_fractions`, `temperature_k`, ... | Perform flash equilibrium calculations for a mixture using Clapeyron.jl. |
+| `run_mlff_molecular_dynamics` | `molecule_id`, `model_name`, `steps`, ... | Run classical MD simulations driven by MLFF forces. |
+| `run_mlff_optimization` | `molecule_id`, `model_name`, `fmax`, ... | Optimize molecular or periodic structures using pre-trained Machine Learning Force Fields (MLFFs). |
+| `run_molecular_dynamics` | `molecule_id`, `steps`, `time_step_fs`, ... | Run molecular dynamics (MD) simulations to study motion and thermal relaxation. |
+| `run_neb_calculation` | `reactant_molecule_id`, `product_molecule_id`, `num_images`, ... | Optimize reaction pathway and energy barrier using Nudged Elastic Band (NEB). |
+| `run_periodic_dft` | `molecule_id`, `kpts`, `method`, ... | Perform periodic DFT or semi-empirical GFN-xTB PBC energy calculations. |
+| `run_pyscf_properties` | `molecule_id`, `method`, `functional`, ... | Perform advanced electronic structure calculations to compute properties like Mulliken and Loewdin populations, Electrostatic Potential (ESP) cubes, and HOMO/LUMO orbital cubes. |
+| `run_reactor_kinetics` | `mechanism`, `initial_state`, `reactor_type`, ... | Simulate chemical kinetics and species concentrations over time using Cantera. |
+| `run_scientific_preflight` | `molecule_id`, `method`, `basis`, ... | Validate molecule consistency and estimate calculation resources before submission. |
+| `run_single_point` | `molecule_id`, `method`, `functional`, ... | Compute single-point energy, dipole moments, HOMO/LUMO energies, and Mulliken charges. |
+| `run_transition_state_search` | `molecule_id`, `method`, `functional`, ... | Perform a transition state search (first-order saddle point) using the Sella optimizer. |
+| `run_xtb_calculation` | `molecule_id`, `task`, `method`, ... | Run fast semi-empirical GFN-xTB calculations. |
+| `save_conformer_as_molecule` | `parent_molecule_id`, `rdkit_conformer_id`, `name` | Extract a single conformer from a search result and save it as a new molecule in the workspace. |
+| `search_conformers` | `molecule_id`, `num_conformers`, `rmsd_threshold` | Generate multiple conformers for a molecule, relax them, prune duplicates, and rank them by forcefield energy and Boltzmann populations. |
+| `simulate_ir_spectrum` | `molecule_id`, `method`, `functional`, ... | Simulate IR intensities and generate a Lorentzian IR spectrum plot. |
+| `standardize_molecule` | `smiles_or_sdf`, `strip_salts`, `neutralize`, ... | Standardize a molecule: parses structure, strips salts, neutralizes formal charge, canonicalizes tautomers, and sanitizes/minimizes the output. |

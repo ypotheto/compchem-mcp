@@ -1,18 +1,44 @@
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response, make_error_response
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.jobs import job_manager
+
 from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import run_ensemble_thermochemistry_engine
-from ypotheto_compchem_mcp.chemistry.xtb_engine import XTB_AVAILABLE, CREST_AVAILABLE
+from ypotheto_compchem_mcp.chemistry.xtb_engine import CREST_AVAILABLE, XTB_AVAILABLE
+from ypotheto_compchem_mcp.envelope import (
+    make_error_response,
+    make_success_response,
+    mcp_tool_decorator,
+)
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
+from ypotheto_compchem_mcp.jobs import job_manager
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
+
+def _finalize_run_ensemble_thermochemistry(res: dict, molecule_id: str, method: str) -> dict:
+    return make_success_response(
+        results=res["results"],
+        interpretation=res["interpretation"],
+        artifacts=res.get("artifacts", []),
+        meta={
+            "molecule_id": molecule_id,
+            "method": f"Ensemble/{method}"
+        }
+    )
+
+def run_ensemble_thermochemistry_job(
+    workspace_id, molecule_id, method, solvent, energy_window_kcal,
+    max_conformers_to_optimize, energy_threshold_kcal, charge, spin
+):
+    res = run_ensemble_thermochemistry_engine(
+        workspace_id, molecule_id, method, solvent, energy_window_kcal,
+        max_conformers_to_optimize, energy_threshold_kcal, charge, spin
+    )
+    return _finalize_run_ensemble_thermochemistry(res, molecule_id, method)
 
 @mcp.tool()
 @mcp_tool_decorator
 def run_ensemble_thermochemistry(
     molecule_id: str,
     method: str = "GFN2-xTB",
-    solvent: Optional[str] = None,
+    solvent: str | None = None,
     energy_window_kcal: float = 6.0,
     max_conformers_to_optimize: int = 5,
     energy_threshold_kcal: float = 3.0,
@@ -62,7 +88,7 @@ def run_ensemble_thermochemistry(
     if run_async or est_sec >= 10:
         job = job_manager.submit_job(
             workspace_id,
-            run_ensemble_thermochemistry_engine,
+            run_ensemble_thermochemistry_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -83,7 +109,7 @@ def run_ensemble_thermochemistry(
             },
             interpretation=f"Ensemble thermochemistry pipeline submitted to background. Job ID: {job.job_id}. Estimate: {est_sec} seconds."
         )
-        
+
     res = run_ensemble_thermochemistry_engine(
         workspace_id,
         molecule_id,
@@ -95,12 +121,4 @@ def run_ensemble_thermochemistry(
         charge,
         spin
     )
-
-    return make_success_response(
-        results=res["results"],
-        interpretation=res["interpretation"],
-        meta={
-            "molecule_id": molecule_id,
-            "method": f"Ensemble/{method}"
-        }
-    )
+    return _finalize_run_ensemble_thermochemistry(res, molecule_id, method)

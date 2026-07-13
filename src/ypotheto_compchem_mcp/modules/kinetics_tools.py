@@ -1,11 +1,26 @@
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
-from ypotheto_compchem_mcp.workspace import get_workspace_id
 from ypotheto_compchem_mcp.chemistry.kinetics_engine import (
+    run_neb_calculation_engine,
     run_transition_state_search_engine,
-    run_neb_calculation_engine
 )
+from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
+
+def _finalize_run_transition_state_search(res: dict) -> dict:
+    interpretation = (
+        f"Transition state search completed successfully: {res['ts_molecule_id']} ({res['name']}).\n"
+        f"Final Energy = {res['energy_ev']:.4f} eV, Atoms = {res['num_atoms']}."
+    )
+    return make_success_response(
+        results=res,
+        interpretation=interpretation,
+        meta={"ts_molecule_id": res["ts_molecule_id"]}
+    )
+
+def run_transition_state_search_job(workspace_id, molecule_id, method, functional, basis, charge, spin):
+    res = run_transition_state_search_engine(workspace_id, molecule_id, method, functional, basis, charge, spin)
+    return _finalize_run_transition_state_search(res)
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -38,7 +53,7 @@ def run_transition_state_search(
     if run_async:
         job = job_manager.submit_job(
             workspace_id,
-            run_transition_state_search_engine,
+            run_transition_state_search_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -57,21 +72,11 @@ def run_transition_state_search(
             },
             interpretation=f"Transition state search job submitted. Job ID: {job.job_id}."
         )
-        
+
     res = run_transition_state_search_engine(
         workspace_id, molecule_id, method, functional, basis, charge, spin
     )
-    
-    interpretation = (
-        f"Transition state search completed successfully: {res['ts_molecule_id']} ({res['name']}).\n"
-        f"Final Energy = {res['energy_ev']:.4f} eV, Atoms = {res['num_atoms']}."
-    )
-    
-    return make_success_response(
-        results=res,
-        interpretation=interpretation,
-        meta={"ts_molecule_id": res["ts_molecule_id"]}
-    )
+    return _finalize_run_transition_state_search(res)
 
 @mcp.tool()
 @mcp_tool_decorator

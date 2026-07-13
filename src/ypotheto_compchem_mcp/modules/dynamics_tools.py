@@ -1,11 +1,49 @@
-from typing import Optional
-from ypotheto_compchem_mcp.server import mcp
-from ypotheto_compchem_mcp.envelope import mcp_tool_decorator, make_success_response
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.jobs import job_manager
 from ypotheto_compchem_mcp.chemistry.md_engine import run_molecular_dynamics_engine
-from ypotheto_compchem_mcp.chemistry.qm_engine import estimate_time_seconds as _estimate_time_seconds
+from ypotheto_compchem_mcp.chemistry.qm_engine import (
+    estimate_time_seconds as _estimate_time_seconds,
+)
+from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.jobs import job_manager
+from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.workspace import get_workspace_id
+
+
+def _finalize_run_molecular_dynamics(
+    res: dict, molecule_id: str, steps: int, temperature_k: float, ensemble: str, calculator_type: str
+) -> dict:
+    traj_bytes = res["trajectory_xyz"].encode("utf-8")
+    traj_art = register_artifact(f"{molecule_id}_trajectory.xyz", traj_bytes, "structure", "MD Trajectory Coordinates (XYZ)")
+    plot_art = register_artifact(f"{molecule_id}_md_profile.png", res["plot_bytes"], "plot", "MD Energy/Temperature Profile Plot")
+
+    interpretation = (
+        f"Molecular Dynamics simulation completed ({ensemble} ensemble, {steps} steps at {temperature_k} K). "
+        f"Final temperature = {res['results']['final_temperature_k']:.1f} K. "
+        f"Saved coordinate trajectory and diagnostic energy/temperature plot."
+    )
+
+    return make_success_response(
+        results=res["results"],
+        interpretation=interpretation,
+        warnings=res["warnings"],
+        artifacts=[traj_art, plot_art],
+        meta={
+            "molecule_id": molecule_id,
+            "ensemble": ensemble,
+            "calculator": calculator_type
+        }
+    )
+
+def run_molecular_dynamics_job(
+    workspace_id, molecule_id, steps, time_step_fs, temperature_k, ensemble,
+    calculator_type, functional, basis, charge, spin, progress_callback=None
+):
+    res = run_molecular_dynamics_engine(
+        workspace_id, molecule_id, steps, time_step_fs, temperature_k, ensemble,
+        calculator_type, functional, basis, charge, spin, progress_callback
+    )
+    return _finalize_run_molecular_dynamics(res, molecule_id, steps, temperature_k, ensemble, calculator_type)
 
 @mcp.tool()
 @mcp_tool_decorator
@@ -16,8 +54,8 @@ def run_molecular_dynamics(
     temperature_k: float = 300.0,
     ensemble: str = "NVT",
     calculator_type: str = "MMFF94",
-    functional: Optional[str] = "B3LYP",
-    basis: Optional[str] = "sto-3g",
+    functional: str | None = "B3LYP",
+    basis: str | None = "sto-3g",
     charge: int = 0,
     spin: int = 0,
     run_async: bool = True
@@ -50,7 +88,7 @@ def run_molecular_dynamics(
     if run_async or est_sec >= 10:
         job = job_manager.submit_job(
             workspace_id,
-            run_molecular_dynamics_engine,
+            run_molecular_dynamics_job,
             est_sec,
             workspace_id,
             molecule_id,
@@ -73,7 +111,7 @@ def run_molecular_dynamics(
             },
             interpretation=f"MD calculation submitted in background. Job ID: {job.job_id}. Estimate: {est_sec} seconds."
         )
-        
+
     res = run_molecular_dynamics_engine(
         workspace_id,
         molecule_id,
@@ -87,26 +125,4 @@ def run_molecular_dynamics(
         charge,
         spin
     )
-    
-    # Register trajectory and profile plot as artifacts
-    traj_bytes = res["trajectory_xyz"].encode("utf-8")
-    traj_art = register_artifact(f"{molecule_id}_trajectory.xyz", traj_bytes, "structure", "MD Trajectory Coordinates (XYZ)")
-    plot_art = register_artifact(f"{molecule_id}_md_profile.png", res["plot_bytes"], "plot", "MD Energy/Temperature Profile Plot")
-    
-    interpretation = (
-        f"Molecular Dynamics simulation completed ({ensemble} ensemble, {steps} steps at {temperature_k} K). "
-        f"Final temperature = {res['results']['final_temperature_k']:.1f} K. "
-        f"Saved coordinate trajectory and diagnostic energy/temperature plot."
-    )
-    
-    return make_success_response(
-        results=res["results"],
-        interpretation=interpretation,
-        warnings=res["warnings"],
-        artifacts=[traj_art, plot_art],
-        meta={
-            "molecule_id": molecule_id,
-            "ensemble": ensemble,
-            "calculator": calculator_type
-        }
-    )
+    return _finalize_run_molecular_dynamics(res, molecule_id, steps, temperature_k, ensemble, calculator_type)

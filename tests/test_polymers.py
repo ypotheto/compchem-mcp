@@ -1,22 +1,21 @@
-import pytest
 import os
-from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 from ypotheto_compchem_mcp.chemistry.polymer_engine import (
-    register_monomer_engine,
     build_polymer_chain_engine,
     pack_amorphous_cell_engine,
+    register_monomer_engine,
     run_lammps_simulation_engine,
-    analyze_md_trajectory_engine
 )
 from ypotheto_compchem_mcp.modules.polymer_tools import (
-    register_monomer,
+    analyze_md_trajectory,
     build_polymer_chain,
     pack_amorphous_cell,
+    register_monomer,
     run_lammps_simulation,
-    analyze_md_trajectory
 )
 from ypotheto_compchem_mcp.workspace import get_workspace_id
+
 
 def test_polymer_chain_construction():
     workspace_id = get_workspace_id()

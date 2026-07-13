@@ -1,8 +1,10 @@
-import psycopg2
 import logging
+import time
+
+import psycopg2
+
 from ypotheto_compchem_mcp.config import settings
 
-import time
 
 def get_connection():
     """Retrieve a connection to the managed PostgreSQL database with retries for slot saturation."""
@@ -40,7 +42,9 @@ def initialize_database():
         
     try:
         cur = conn.cursor()
-        
+
+        cur.execute("CREATE SCHEMA IF NOT EXISTS compchem;")
+
         # 1. Molecules Table (Searchable Archive)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS compchem.molecules (

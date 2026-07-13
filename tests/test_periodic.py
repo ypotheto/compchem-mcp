@@ -1,25 +1,27 @@
 import sys
 import types
-import pytest
 from unittest.mock import patch
-from ypotheto_compchem_mcp.workspace import get_workspace_id
-from ypotheto_compchem_mcp.errors import BackendUnavailableError
+
+import pytest
+
 from ypotheto_compchem_mcp.chemistry.periodic_engine import (
-    import_periodic_structure_engine,
-    analyze_crystal_symmetry_engine,
-    generate_supercell_engine,
-    build_surface_slab_engine,
     add_adsorbate_to_surface_engine,
-    run_periodic_dft_engine
+    analyze_crystal_symmetry_engine,
+    build_surface_slab_engine,
+    generate_supercell_engine,
+    import_periodic_structure_engine,
+    run_periodic_dft_engine,
 )
+from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.modules.periodic_tools import (
-    import_periodic_structure,
-    analyze_crystal_symmetry,
-    generate_supercell,
-    build_surface_slab,
     add_adsorbate_to_surface,
-    run_periodic_dft
+    analyze_crystal_symmetry,
+    build_surface_slab,
+    generate_supercell,
+    import_periodic_structure,
+    run_periodic_dft,
 )
+from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 # Standard CIF for Silicon Diamond Crystal Structure (Fd-3m space group, Number 227)
 SILICON_CIF = """data_Si
