@@ -15,9 +15,17 @@ class Settings(BaseSettings):
     api_token: str = ""
     data_dir: Path = Path("~/.compchem-mcp").expanduser()
     port: int = 8348
-    auth_mode: str = "token"  # "token" | "none" | "keys"
+    auth_mode: str = "token"  # "token" | "none" | "keys" | "oauth"
     public_base_url: str = "http://localhost:8348"
     database_url: str = ""
+
+    # OAuth (COMPCHEM_AUTH_MODE=oauth) - Kinde (or any OIDC provider) as the
+    # authorization server; this app only ever plays the resource-server role.
+    # oauth_issuer is the provider's base URL (e.g. https://<subdomain>.kinde.com);
+    # oauth_audience must match this API's registered Audience in Kinde exactly.
+    oauth_issuer: str | None = None
+    oauth_audience: str | None = None
+    oauth_required_permission: str = "access:ypotheto-compchem-mcp"
     spaces_bucket: str | None = None
     spaces_endpoint: str | None = None
     spaces_key: str | None = None

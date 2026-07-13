@@ -2,6 +2,62 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] - Phase 7: auth & multi-tenancy
+
+### Added
+- `apikeys.py`: `KeyStore` ABC with `SqliteKeyStore` (default, `{data_dir}/keys.db`)
+  and `PostgresKeyStore` (when `COMPCHEM_DATABASE_URL` is set, schema-qualified
+  `compchem.api_keys` table, using `psycopg2`/plain-connection-per-call like the
+  rest of this project rather than a new pooling dependency) - keys stored only
+  as a SHA-256 hash, issue/verify/disable/list. Ported from
+  `statistician-mcp/src/statistician_mcp/apikeys.py`.
+- `scripts/issue_key.py`: admin CLI (`issue`/`disable`/`list`) targeting the same
+  key store the server would use.
+- `oauth.py`: `OAuthVerifier` - RS256 JWT verification via `PyJWKClient`,
+  issuer/audience/expiry/required-`permissions`-claim checks, `sub` -> workspace
+  mapping. Ported near-verbatim from
+  `statistician-mcp/src/statistician_mcp/oauth.py`, including its documented
+  audience-claim stopgap for providers (Kinde) that don't yet honor RFC 8707's
+  `resource` parameter.
+- `config.py`: `oauth_issuer`, `oauth_audience`, `oauth_required_permission`
+  settings; `auth_mode` now actually supports `"oauth"` (previously only
+  `"token"`/`"none"`/`"keys"` were declared, and even those weren't real
+  mode-dispatch - see Fixed below).
+- `PyJWT[crypto]` added to core dependencies.
+- `http_app.py`: `AuthMiddleware` now dispatches on live `settings.auth_mode`
+  (`none`/`keys`/`oauth`/`token`) via a single shared `resolve_workspace_id_for_token()`
+  helper, used by both the middleware and `serve_artifact`'s Bearer-fallback
+  path so the two auth checks can't silently diverge. Added the
+  `/.well-known/oauth-protected-resource` route (RFC 9728) and a
+  `WWW-Authenticate` header on 401s in oauth mode, so a client can discover
+  where to authenticate.
+- `tests/test_oauth.py` (ported from statistician-mcp, using a generated RS256
+  keypair - no live tenant needed), `tests/test_apikeys.py` (parameterized over
+  both SQLite and Postgres backends), and new HTTP-level tests in
+  `tests/test_http.py` covering all four `auth_mode` values end-to-end through
+  the actual middleware.
+
+### Fixed
+- `auth_mode` was a declared-but-dead setting: the only real dispatch was an
+  implicit "is `api_token` truthy" check, and `"keys"` had no implementation at
+  all despite being advertised in the type comment. Default (`"token"`)
+  behavior is unchanged (byte-for-byte the same shared-secret check as
+  before), but the setting now genuinely means something for all four values.
+- **DISCOVERY (found while implementing `PostgresKeyStore`, not fixed here -
+  see follow-up task):** `database.py`'s `initialize_database()` has been
+  silently failing its `CREATE SCHEMA IF NOT EXISTS compchem` statement on
+  every single call against this project's real production database
+  (`psycopg2.errors.InsufficientPrivilege: permission denied for database
+  mcp-servers`) - the app's role has schema-scoped `CREATE` on the
+  already-existing `compchem` schema but not database-level `CREATE`, which
+  `CREATE SCHEMA IF NOT EXISTS` still requires even when the schema already
+  exists. Masked entirely by `initialize_database()`'s broad except-and-log
+  error handling; the durable-job-queue/molecule-archive tables still work
+  only because they were provisioned out-of-band, not by this code path.
+  `PostgresKeyStore.__init__` checks `information_schema.schemata` first and
+  only attempts `CREATE SCHEMA IF NOT EXISTS` when actually missing, avoiding
+  the same failure for the new `api_keys` table.
+
 ## [Unreleased] - Phase 6: advisor & guidance layer
 
 ### Added

@@ -132,6 +132,145 @@ def test_timeout_middleware_504s_slow_post_but_not_slow_get():
     response = client.get("/slow")
     assert response.status_code == 200
 
+def test_auth_mode_none_allows_all_requests_regardless_of_api_token():
+    original_mode = settings.auth_mode
+    original_token = settings.api_token
+    settings.auth_mode = "none"
+    settings.api_token = "some_secret_that_should_be_ignored"
+    client = TestClient(app)
+
+    try:
+        response = client.get("/mcp")
+        assert response.status_code != 401
+
+        response = client.get("/mcp", headers={"Authorization": "Bearer totally_wrong"})
+        assert response.status_code != 401
+    finally:
+        settings.auth_mode = original_mode
+        settings.api_token = original_token
+
+def test_auth_mode_keys_uses_key_store(tmp_path):
+    from ypotheto_compchem_mcp.apikeys import SqliteKeyStore
+
+    original_mode = settings.auth_mode
+    original_db_url = settings.database_url
+    original_data_dir = settings.data_dir
+    settings.auth_mode = "keys"
+    settings.database_url = ""
+    settings.data_dir = tmp_path
+    client = TestClient(app)
+
+    try:
+        raw_key = SqliteKeyStore(tmp_path / "keys.db").issue_key("ws_from_key")
+
+        response = client.get("/mcp")
+        assert response.status_code == 401
+
+        response = client.get("/mcp", headers={"Authorization": "Bearer not_a_real_key"})
+        assert response.status_code == 401
+
+        response = client.get("/mcp", headers={"Authorization": f"Bearer {raw_key}"})
+        assert response.status_code != 401
+    finally:
+        settings.auth_mode = original_mode
+        settings.database_url = original_db_url
+        settings.data_dir = original_data_dir
+
+def test_auth_mode_oauth_wiring_rejects_and_accepts_and_sets_www_authenticate():
+    import time
+
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    from ypotheto_compchem_mcp import oauth as oauth_module
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+
+    class _StaticSigningKey:
+        def __init__(self, key):
+            self.key = key
+
+    class _StaticJWKClient:
+        def get_signing_key_from_jwt(self, token):
+            return _StaticSigningKey(public_key)
+
+    issuer = "https://test-tenant.example.com"
+    audience = "https://ypotheto-compchem-mcp.example/mcp"
+    permission = "access:ypotheto-compchem-mcp"
+
+    def _make_token(expired=False):
+        now = time.time()
+        claims = {
+            "iss": issuer,
+            "aud": audience,
+            "sub": "kp_http_test",
+            "exp": now - 5 if expired else now + 300,
+            "permissions": [permission],
+        }
+        return jwt.encode(claims, private_key, algorithm="RS256")
+
+    original_mode = settings.auth_mode
+    original_issuer = settings.oauth_issuer
+    original_audience = settings.oauth_audience
+    original_permission = settings.oauth_required_permission
+    original_build_verifier = oauth_module.build_oauth_verifier
+    settings.auth_mode = "oauth"
+    settings.oauth_issuer = issuer
+    settings.oauth_audience = audience
+    settings.oauth_required_permission = permission
+    client = TestClient(app)
+
+    try:
+        # No token at all -> 401 with a WWW-Authenticate pointing at discovery.
+        # This case never even reaches build_oauth_verifier (resolve_workspace_id_for_token
+        # short-circuits on an empty token), so no patching is needed yet.
+        response = client.get("/mcp")
+        assert response.status_code == 401
+        assert "resource_metadata" in response.headers.get("www-authenticate", "")
+
+        # http_app.py resolves build_oauth_verifier via a fresh `from
+        # ypotheto_compchem_mcp.oauth import build_oauth_verifier` on every
+        # call, so patching the module attribute here is picked up
+        # immediately - this exercises the exact middleware wiring a real
+        # deployment would use, just swapping in a mocked JWK client instead
+        # of a real JWKS endpoint.
+        real_verifier = oauth_module.OAuthVerifier(
+            issuer=issuer, audience=audience, required_permission=permission, jwk_client=_StaticJWKClient()
+        )
+        oauth_module.build_oauth_verifier = lambda _settings: real_verifier
+
+        expired_token = _make_token(expired=True)
+        response = client.get("/mcp", headers={"Authorization": f"Bearer {expired_token}"})
+        assert response.status_code == 401
+
+        valid_token = _make_token()
+        response = client.get("/mcp", headers={"Authorization": f"Bearer {valid_token}"})
+        assert response.status_code != 401
+    finally:
+        settings.auth_mode = original_mode
+        settings.oauth_issuer = original_issuer
+        settings.oauth_audience = original_audience
+        settings.oauth_required_permission = original_permission
+        oauth_module.build_oauth_verifier = original_build_verifier
+
+def test_oauth_protected_resource_metadata_endpoint():
+    original_issuer = settings.oauth_issuer
+    original_audience = settings.oauth_audience
+    settings.oauth_issuer = "https://test-tenant.example.com"
+    settings.oauth_audience = "https://ypotheto-compchem-mcp.example/mcp"
+    client = TestClient(app)
+
+    try:
+        response = client.get("/.well-known/oauth-protected-resource")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["resource"] == settings.oauth_audience
+        assert body["authorization_servers"] == [settings.oauth_issuer]
+    finally:
+        settings.oauth_issuer = original_issuer
+        settings.oauth_audience = original_audience
+
 def test_dns_rebinding_protection_rejects_forged_host_header():
     original_token = settings.api_token
     settings.api_token = ""

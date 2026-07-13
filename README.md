@@ -157,18 +157,32 @@ To connect a remote client over streamable HTTP with Bearer token authentication
 
 ---
 
+## Authentication
+
+Controlled by `COMPCHEM_AUTH_MODE`, checked live on every request:
+
+* **`token`** (default): a single shared secret (`COMPCHEM_API_TOKEN`). Every caller that presents it lands in the same workspace derived from that token; unset entirely, auth is effectively open.
+* **`none`**: no credential required at all, regardless of `COMPCHEM_API_TOKEN`. Whatever Bearer token a caller does supply (if any) still selects their own isolated workspace.
+* **`keys`**: a per-tenant API-key table (`ypotheto_compchem_mcp.apikeys`), backed by SQLite (`{COMPCHEM_DATA_DIR}/keys.db`) by default or Postgres when `COMPCHEM_DATABASE_URL` is set. Manage keys with `python scripts/issue_key.py {issue,disable,list}`. Each key maps to its own workspace, hashed at rest (the raw key is only ever shown once, at issuance).
+* **`oauth`**: OIDC resource-server mode (Kinde or any RS256-signing provider). Requires `COMPCHEM_OAUTH_ISSUER` and `COMPCHEM_OAUTH_AUDIENCE`; a valid token's `sub` claim resolves to a stable per-user workspace, and the required `COMPCHEM_OAUTH_REQUIRED_PERMISSION` must appear in its `permissions` claim. A missing/invalid token gets a `401` with a `WWW-Authenticate` header pointing at `/.well-known/oauth-protected-resource` (RFC 9728) so a client can discover where to authenticate.
+
+---
+
 ## Environment Variables
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
-| `COMPCHEM_API_TOKEN` | Bearer token required for authentication | `""` (Disabled) |
+| `COMPCHEM_API_TOKEN` | Shared-secret Bearer token required for authentication in `auth_mode=token` (the default) | `""` (Disabled) |
+| `COMPCHEM_AUTH_MODE` | Authentication mode: `token` (single shared secret, `COMPCHEM_API_TOKEN`), `none` (no auth at all), `keys` (per-tenant API-key table, see below), or `oauth` (OIDC/Kinde-style resource server, see below) | `"token"` |
+| `COMPCHEM_OAUTH_ISSUER` / `COMPCHEM_OAUTH_AUDIENCE` | OIDC provider base URL and this API's registered audience (required together when `auth_mode=oauth`) | unset |
+| `COMPCHEM_OAUTH_REQUIRED_PERMISSION` | The `permissions` claim a valid token must carry | `"access:ypotheto-compchem-mcp"` |
 | `COMPCHEM_DATA_DIR` | Directory on disk to store molecule structures and artifacts | `~/.compchem-mcp` |
 | `COMPCHEM_PORT` | Port to run the HTTP/SSE server | `8348` |
 | `COMPCHEM_PUBLIC_BASE_URL` | Base URL used to prefix artifact download links; also used to derive the allowed `Host` for DNS-rebinding protection | `http://localhost:8348` |
 | `COMPCHEM_ALLOWED_ORIGINS` | Comma-separated CORS allowlist. Empty means no CORS headers at all (same-origin only) | `""` (none) |
 | `COMPCHEM_REQUEST_TIMEOUT_SECONDS` | Hard timeout for a single POST tool-call request before returning `504`; never applies to GET (health check, artifact download, streamable-HTTP push) | `120` |
 | `COMPCHEM_ARTIFACT_URL_EXPIRY_SECONDS` | Lifetime of a signed artifact download URL (`?exp=&sig=`) before it expires | `604800` (7 days) |
-| `COMPCHEM_DATABASE_URL` | PostgreSQL connection string for the durable job queue and molecule archive (requires the `[db]` extra). Unset falls back to a local thread pool + on-disk job state | `""` (disabled) |
+| `COMPCHEM_DATABASE_URL` | PostgreSQL connection string for the durable job queue, molecule archive, and (in `auth_mode=keys`) the API-key table (requires the `[db]` extra). Unset falls back to a local thread pool + on-disk job state, and a local SQLite file for API keys | `""` (disabled) |
 | `COMPCHEM_SPACES_BUCKET` / `_ENDPOINT` / `_KEY` / `_SECRET` / `_REGION` / `_PREFIX` | DigitalOcean Spaces (S3-compatible) storage backend for artifacts (requires the `[s3]` extra). Unset falls back to local disk storage | unset (local disk) |
 
 ---
