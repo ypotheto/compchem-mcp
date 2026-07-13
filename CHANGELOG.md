@@ -5,6 +5,27 @@ All notable changes to this project are documented here.
 ## [Unreleased] - Phase 8: molecule store & structural polish
 
 ### Added
+- `server.py` now exposes `create_server(settings) -> ServerBundle` instead
+  of a module-global `mcp` instance built via import-side-effect tool
+  registration. Every one of the 15 tool modules (`builder_tools`,
+  `cheminformatics_tools`, `dynamics_tools`, `ensemble_tools`,
+  `kinetics_tools`, `mlff_tools`, `periodic_tools`, `polymer_tools`,
+  `quantum_tools`, `scientific_preflight_tools`, `solubility_tools`,
+  `thermo_tools`, `vibrations_tools`, `xtb_tools`, `advisor_tools`) now
+  defines a `register_<module>_tools(mcp)` function instead of decorating
+  its tool functions with `@mcp.tool()`/`@mcp.prompt()` directly against an
+  imported global - `create_server()` calls each one against a freshly
+  constructed `FastMCP` instance. `mcp.tool()(fn)`/`mcp.prompt()(fn)` return
+  `fn` unchanged (verified against FastMCP's own source before relying on
+  it), so every tool function's behavior when called directly (as most
+  tests do) is completely unaffected - only *how* it gets registered onto an
+  MCP server changed. `http_app.py` similarly exposes
+  `create_app(bundle) -> ASGIApp` instead of a module-level `app`; `cli.py`
+  builds `bundle = create_server(settings)` and (for the http transport)
+  `app = create_app(bundle)` itself, passing the app object directly to
+  `uvicorn.run()` instead of a `"module:app"` string import path (the string
+  form is no longer needed since nothing requires a module-level default
+  instance anymore).
 - `molecules.py`: `MoleculeStore`, a cached facade over the molecule index/
   file/Postgres tiering already implemented in `chemistry.builder_engine`
   (reuses it rather than duplicating it). Adds a short-lived, thread-safe
@@ -39,6 +60,16 @@ All notable changes to this project are documented here.
   defensively normalizes any entry missing `molecule_id` by backfilling it
   from the index's own dict key, since the index is otherwise-untrusted
   persisted state this store didn't necessarily write itself.
+- **Near-miss caught while updating `tests/test_core_only_install.py` for the
+  8.2 factory refactor:** that test blocks every optional-extra package via a
+  meta-path finder and then (previously) just did
+  `import ypotheto_compchem_mcp.server` to confirm the module tree imports
+  without them. Since 8.2 moved the 15 tool-module imports out of
+  `server.py`'s module body and into `create_server()`'s function body (only
+  imported when actually called), a bare module import no longer exercises
+  those imports at all - the test would have kept "passing" while silently
+  checking nothing. Fixed by having the test call `create_server(settings)`
+  inside the blocked-imports scope, not just import the module.
 
 ### Checked, no action needed
 - 8.3 (SSRF hardening for URL-ingestion tools): the plan's premise -

@@ -1,33 +1,45 @@
+import pytest
 from starlette.testclient import TestClient
 
 from ypotheto_compchem_mcp.artifacts import sign_artifact_url
 from ypotheto_compchem_mcp.config import settings
-from ypotheto_compchem_mcp.http_app import app
+from ypotheto_compchem_mcp.http_app import create_app
+from ypotheto_compchem_mcp.server import create_server
 from ypotheto_compchem_mcp.workspace import get_workspace_id_from_token
 
 
-def test_healthz():
+@pytest.fixture
+def app():
+    """Builds a fresh ASGI app from a fresh ServerBundle for each test, via
+    the Phase 8 create_server(settings)/create_app(bundle) factories, instead
+    of importing one shared module-level app object. Uses the global settings
+    singleton (as the real running server does) so every existing test that
+    mutates settings.X directly around this fixture keeps working unchanged."""
+    return create_app(create_server(settings))
+
+
+def test_healthz(app):
     client = TestClient(app)
     response = client.get("/healthz")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert "version" in response.json()
 
-def test_auth_middleware():
+def test_auth_middleware(app):
     # Set api_token in settings for testing
     original_token = settings.api_token
     settings.api_token = "test_secret_token"
     client = TestClient(app)
-    
+
     try:
         # Request without token should fail with 401
         response = client.get("/mcp")
         assert response.status_code == 401
-        
+
         # Request with invalid token should fail with 401
         response = client.get("/mcp", headers={"Authorization": "Bearer bad_token"})
         assert response.status_code == 401
-        
+
         # Request with valid token in header should pass the auth middleware
         # (It will then hit the mounted FastMCP app; GET /mcp might return 404/405, but NOT 401)
         response = client.get("/mcp", headers={"Authorization": "Bearer test_secret_token"})
@@ -41,7 +53,7 @@ def test_auth_middleware():
         # Restore original token
         settings.api_token = original_token
 
-def test_serve_artifact_blocks_cross_workspace_access():
+def test_serve_artifact_blocks_cross_workspace_access(app):
     from ypotheto_compchem_mcp.storage import storage
 
     original_token = settings.api_token
@@ -75,7 +87,7 @@ def test_serve_artifact_blocks_cross_workspace_access():
     finally:
         settings.api_token = original_token
 
-def test_signed_artifact_url_grants_access_without_bearer_token():
+def test_signed_artifact_url_grants_access_without_bearer_token(app):
     from ypotheto_compchem_mcp.storage import storage
 
     original_token = settings.api_token
@@ -132,7 +144,7 @@ def test_timeout_middleware_504s_slow_post_but_not_slow_get():
     response = client.get("/slow")
     assert response.status_code == 200
 
-def test_auth_mode_none_allows_all_requests_regardless_of_api_token():
+def test_auth_mode_none_allows_all_requests_regardless_of_api_token(app):
     original_mode = settings.auth_mode
     original_token = settings.api_token
     settings.auth_mode = "none"
@@ -149,7 +161,7 @@ def test_auth_mode_none_allows_all_requests_regardless_of_api_token():
         settings.auth_mode = original_mode
         settings.api_token = original_token
 
-def test_auth_mode_keys_uses_key_store(tmp_path):
+def test_auth_mode_keys_uses_key_store(app, tmp_path):
     from ypotheto_compchem_mcp.apikeys import SqliteKeyStore
 
     original_mode = settings.auth_mode
@@ -176,7 +188,7 @@ def test_auth_mode_keys_uses_key_store(tmp_path):
         settings.database_url = original_db_url
         settings.data_dir = original_data_dir
 
-def test_auth_mode_oauth_wiring_rejects_and_accepts_and_sets_www_authenticate():
+def test_auth_mode_oauth_wiring_rejects_and_accepts_and_sets_www_authenticate(app):
     import time
 
     import jwt
@@ -254,7 +266,7 @@ def test_auth_mode_oauth_wiring_rejects_and_accepts_and_sets_www_authenticate():
         settings.oauth_required_permission = original_permission
         oauth_module.build_oauth_verifier = original_build_verifier
 
-def test_oauth_protected_resource_metadata_endpoint():
+def test_oauth_protected_resource_metadata_endpoint(app):
     original_issuer = settings.oauth_issuer
     original_audience = settings.oauth_audience
     settings.oauth_issuer = "https://test-tenant.example.com"
@@ -271,7 +283,7 @@ def test_oauth_protected_resource_metadata_endpoint():
         settings.oauth_issuer = original_issuer
         settings.oauth_audience = original_audience
 
-def test_dns_rebinding_protection_rejects_forged_host_header():
+def test_dns_rebinding_protection_rejects_forged_host_header(app):
     original_token = settings.api_token
     settings.api_token = ""
     mcp_request = {"jsonrpc": "2.0", "method": "ping", "id": 1}
@@ -300,13 +312,13 @@ def test_dns_rebinding_protection_rejects_forged_host_header():
     finally:
         settings.api_token = original_token
 
-def test_cors_lockdown_default_emits_no_cors_headers():
+def test_cors_lockdown_default_emits_no_cors_headers(app):
     client = TestClient(app)
     response = client.get("/healthz", headers={"Origin": "https://evil.example.com"})
     assert response.status_code == 200
     assert "access-control-allow-origin" not in response.headers
 
-def test_cors_allows_only_configured_origins():
+def test_cors_allows_only_configured_origins(app):
     original_origins = settings.allowed_origins
     settings.allowed_origins = ["https://allowed.example.com"]
     client = TestClient(app)

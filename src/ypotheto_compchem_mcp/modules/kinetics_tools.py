@@ -1,9 +1,10 @@
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.kinetics_engine import (
     run_neb_calculation_engine,
     run_transition_state_search_engine,
 )
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
@@ -22,7 +23,6 @@ def run_transition_state_search_job(workspace_id, molecule_id, method, functiona
     res = run_transition_state_search_engine(workspace_id, molecule_id, method, functional, basis, charge, spin)
     return _finalize_run_transition_state_search(res)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_transition_state_search(
     molecule_id: str,
@@ -78,7 +78,6 @@ def run_transition_state_search(
     )
     return _finalize_run_transition_state_search(res)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_neb_calculation(
     reactant_molecule_id: str,
@@ -149,3 +148,8 @@ def run_neb_calculation(
         artifacts=res.get("artifacts", []),
         meta={"reactant_molecule_id": reactant_molecule_id, "product_molecule_id": product_molecule_id}
     )
+
+
+def register_kinetics_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_transition_state_search)
+    mcp.tool()(run_neb_calculation)

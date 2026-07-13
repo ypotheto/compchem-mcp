@@ -50,7 +50,15 @@ def test_server_module_tree_imports_without_any_optional_backend(monkeypatch):
     blocker = _BlockOptionalPackagesFinder()
     sys.meta_path.insert(0, blocker)
     try:
-        import ypotheto_compchem_mcp.server  # noqa: F401
+        # Since Phase 8's server.py factory refactor, the 15 tool modules are
+        # only imported lazily inside create_server() (not at
+        # `import ypotheto_compchem_mcp.server` time) - actually calling it
+        # here is what exercises the "no optional backend required" claim;
+        # a bare module import alone would trivially pass without checking
+        # anything.
+        import ypotheto_compchem_mcp.server
+        from ypotheto_compchem_mcp.config import settings
+        ypotheto_compchem_mcp.server.create_server(settings)
     finally:
         sys.meta_path.remove(blocker)
         # Restore a clean module cache for subsequent tests in this session.

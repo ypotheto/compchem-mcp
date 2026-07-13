@@ -1,13 +1,13 @@
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.solubility_engine import (
     calculate_hsp_distance_engine,
     calculate_hsp_engine,
 )
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def calculate_hsp(
     molecule_id: str
@@ -41,7 +41,6 @@ def calculate_hsp(
         meta={"molecule_id": molecule_id}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def calculate_hsp_distance(
     molecule_id_1: str,
@@ -72,3 +71,8 @@ def calculate_hsp_distance(
             "molecule_id_2": molecule_id_2
         }
     )
+
+
+def register_solubility_tools(mcp: FastMCP) -> None:
+    mcp.tool()(calculate_hsp)
+    mcp.tool()(calculate_hsp_distance)

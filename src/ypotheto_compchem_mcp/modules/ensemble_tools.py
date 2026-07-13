@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.ensemble_pipeline import run_ensemble_thermochemistry_engine
 from ypotheto_compchem_mcp.chemistry.xtb_engine import CREST_AVAILABLE, XTB_AVAILABLE
 from ypotheto_compchem_mcp.envelope import (
@@ -8,7 +10,6 @@ from ypotheto_compchem_mcp.envelope import (
 )
 from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
@@ -33,7 +34,6 @@ def run_ensemble_thermochemistry_job(
     )
     return _finalize_run_ensemble_thermochemistry(res, molecule_id, method)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_ensemble_thermochemistry(
     molecule_id: str,
@@ -122,3 +122,7 @@ def run_ensemble_thermochemistry(
         spin
     )
     return _finalize_run_ensemble_thermochemistry(res, molecule_id, method)
+
+
+def register_ensemble_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_ensemble_thermochemistry)

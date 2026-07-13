@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.qm_engine import (
     PYSCF_AVAILABLE,
@@ -17,7 +19,6 @@ from ypotheto_compchem_mcp.envelope import (
 )
 from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 _PYSCF_UNAVAILABLE_HINT = "pip install ypotheto-compchem-mcp[qm], or run inside the project's Docker image which includes it."
@@ -121,7 +122,6 @@ def run_pyscf_properties_job(workspace_id, molecule_id, method, functional, basi
     res = run_pyscf_properties_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, properties, solvent)
     return _finalize_run_pyscf_properties(res, molecule_id, method, functional, basis)
 
-@mcp.tool()
 @mcp_tool_decorator
 def estimate_calculation_time(molecule_id: str, method: str = "DFT", basis: str = "sto-3g") -> dict:
     """
@@ -152,7 +152,6 @@ def estimate_calculation_time(molecule_id: str, method: str = "DFT", basis: str 
     
     return make_success_response(results, interpretation)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_single_point(
     molecule_id: str,
@@ -238,7 +237,6 @@ def run_single_point(
     res = run_single_point_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, solvent)
     return _finalize_run_single_point(res, molecule_id, method, functional, basis)
 
-@mcp.tool()
 @mcp_tool_decorator
 def optimize_geometry(
     molecule_id: str,
@@ -329,7 +327,6 @@ def optimize_geometry(
     res = optimize_geometry_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, max_steps, None, solvent)
     return _finalize_optimize_geometry(res, molecule_id, method, functional, basis)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_pyscf_properties(
     molecule_id: str,
@@ -420,7 +417,6 @@ def run_pyscf_properties(
     )
     return _finalize_run_pyscf_properties(res, molecule_id, method, functional, basis)
 
-@mcp.tool()
 @mcp_tool_decorator
 def get_job_status(job_id: str) -> dict:
     """
@@ -454,3 +450,11 @@ def get_job_status(job_id: str) -> dict:
         interpretation=interpretation,
         meta={"job_id": job_id, "status": job.status}
     )
+
+
+def register_quantum_tools(mcp: FastMCP) -> None:
+    mcp.tool()(estimate_calculation_time)
+    mcp.tool()(run_single_point)
+    mcp.tool()(optimize_geometry)
+    mcp.tool()(run_pyscf_properties)
+    mcp.tool()(get_job_status)

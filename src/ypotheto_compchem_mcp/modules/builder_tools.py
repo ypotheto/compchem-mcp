@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.builder_engine import (
     build_molecule_from_smiles_engine,
@@ -6,11 +8,9 @@ from ypotheto_compchem_mcp.chemistry.builder_engine import (
 )
 from ypotheto_compchem_mcp.envelope import WarningInfo, make_success_response, mcp_tool_decorator
 from ypotheto_compchem_mcp.molecules import molecule_store
-from ypotheto_compchem_mcp.server import mcp
 
 _MAX_INLINE_CONTENT_BYTES = 50 * 1024
 
-@mcp.tool()
 @mcp_tool_decorator
 def build_molecule_from_smiles(smiles: str, name: str | None = None) -> dict:
     """
@@ -52,7 +52,6 @@ def build_molecule_from_smiles(smiles: str, name: str | None = None) -> dict:
         meta={"molecule_id": res["molecule_id"], "smiles": smiles}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def get_3d_coordinates(molecule_id: str, format: str = "xyz") -> dict:
     """
@@ -124,7 +123,6 @@ def get_3d_coordinates(molecule_id: str, format: str = "xyz") -> dict:
         meta={"molecule_id": molecule_id}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def list_molecules() -> dict:
     """
@@ -145,7 +143,6 @@ def list_molecules() -> dict:
         interpretation=interpretation
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def describe_molecule(molecule_id: str) -> dict:
     """
@@ -169,7 +166,6 @@ def describe_molecule(molecule_id: str) -> dict:
         meta={"molecule_id": molecule_id}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def delete_molecule(molecule_id: str) -> dict:
     """
@@ -188,3 +184,11 @@ def delete_molecule(molecule_id: str) -> dict:
         results={"molecule_id": molecule_id, "deleted": True},
         interpretation=f"Deleted molecule {molecule_id} from this workspace."
     )
+
+
+def register_builder_tools(mcp: FastMCP) -> None:
+    mcp.tool()(build_molecule_from_smiles)
+    mcp.tool()(get_3d_coordinates)
+    mcp.tool()(list_molecules)
+    mcp.tool()(describe_molecule)
+    mcp.tool()(delete_molecule)

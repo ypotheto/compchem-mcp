@@ -1,5 +1,7 @@
 import json
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.qm_engine import (
     estimate_time_seconds as _estimate_time_seconds,
@@ -15,7 +17,6 @@ from ypotheto_compchem_mcp.envelope import (
     mcp_tool_decorator,
 )
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
@@ -77,7 +78,6 @@ def run_simulate_ir_spectrum_job(workspace_id, molecule_id, method, functional, 
     res = simulate_ir_spectrum_engine(workspace_id, molecule_id, method, functional, basis, charge, spin, progress_callback)
     return _finalize_simulate_ir_spectrum(res, molecule_id, method, basis)
 
-@mcp.tool()
 @mcp_tool_decorator
 def calculate_vibrations(
     molecule_id: str,
@@ -150,7 +150,6 @@ def calculate_vibrations(
     res = run_vibrations_engine(workspace_id, molecule_id, method, functional, basis, charge, spin)
     return _finalize_calculate_vibrations(res, molecule_id, method, functional, basis)
 
-@mcp.tool()
 @mcp_tool_decorator
 def simulate_ir_spectrum(
     molecule_id: str,
@@ -221,3 +220,8 @@ def simulate_ir_spectrum(
 
     res = simulate_ir_spectrum_engine(workspace_id, molecule_id, method, functional, basis, charge, spin)
     return _finalize_simulate_ir_spectrum(res, molecule_id, method, basis)
+
+
+def register_vibrations_tools(mcp: FastMCP) -> None:
+    mcp.tool()(calculate_vibrations)
+    mcp.tool()(simulate_ir_spectrum)

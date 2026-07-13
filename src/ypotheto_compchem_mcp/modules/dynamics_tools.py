@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.md_engine import run_molecular_dynamics_engine
 from ypotheto_compchem_mcp.chemistry.qm_engine import (
@@ -6,7 +8,6 @@ from ypotheto_compchem_mcp.chemistry.qm_engine import (
 )
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
@@ -45,7 +46,6 @@ def run_molecular_dynamics_job(
     )
     return _finalize_run_molecular_dynamics(res, molecule_id, steps, temperature_k, ensemble, calculator_type)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_molecular_dynamics(
     molecule_id: str,
@@ -126,3 +126,7 @@ def run_molecular_dynamics(
         spin
     )
     return _finalize_run_molecular_dynamics(res, molecule_id, steps, temperature_k, ensemble, calculator_type)
+
+
+def register_dynamics_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_molecular_dynamics)

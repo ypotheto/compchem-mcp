@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.periodic_engine import (
     add_adsorbate_to_surface_engine,
@@ -9,11 +11,9 @@ from ypotheto_compchem_mcp.chemistry.periodic_engine import (
     run_periodic_dft_engine,
 )
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def import_periodic_structure(
     cif_content: str,
@@ -61,7 +61,6 @@ def import_periodic_structure(
         }
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def analyze_crystal_symmetry(
     molecule_id: str
@@ -91,7 +90,6 @@ def analyze_crystal_symmetry(
         }
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def generate_supercell(
     molecule_id: str,
@@ -138,7 +136,6 @@ def generate_supercell(
     )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def build_surface_slab(
     bulk_molecule_id: str,
@@ -184,7 +181,6 @@ def build_surface_slab(
     )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def add_adsorbate_to_surface(
     slab_molecule_id: str,
@@ -229,7 +225,6 @@ def add_adsorbate_to_surface(
     )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_periodic_dft(
     molecule_id: str,
@@ -276,3 +271,12 @@ def run_periodic_dft(
         results=res["results"],
         interpretation=res["interpretation"]
     )
+
+
+def register_periodic_tools(mcp: FastMCP) -> None:
+    mcp.tool()(import_periodic_structure)
+    mcp.tool()(analyze_crystal_symmetry)
+    mcp.tool()(generate_supercell)
+    mcp.tool()(build_surface_slab)
+    mcp.tool()(add_adsorbate_to_surface)
+    mcp.tool()(run_periodic_dft)

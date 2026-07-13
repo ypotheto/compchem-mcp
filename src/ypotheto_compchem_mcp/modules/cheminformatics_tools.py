@@ -1,12 +1,12 @@
 import json
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.descriptors import calculate_descriptors_engine
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
-from ypotheto_compchem_mcp.server import mcp
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def calculate_descriptors(molecule_id: str) -> dict:
     """
@@ -46,7 +46,6 @@ def calculate_descriptors(molecule_id: str) -> dict:
         meta={"molecule_id": molecule_id}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def standardize_molecule(
     smiles_or_sdf: str,
@@ -102,7 +101,6 @@ def standardize_molecule(
         }
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def enumerate_tautomers(
     molecule_id: str
@@ -130,7 +128,6 @@ def enumerate_tautomers(
         meta={"molecule_id": molecule_id}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def search_conformers(
     molecule_id: str,
@@ -164,7 +161,6 @@ def search_conformers(
         meta={"molecule_id": molecule_id}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def save_conformer_as_molecule(
     parent_molecule_id: str,
@@ -211,3 +207,11 @@ def save_conformer_as_molecule(
             "parent_conformer_id": rdkit_conformer_id
         }
     )
+
+
+def register_cheminformatics_tools(mcp: FastMCP) -> None:
+    mcp.tool()(calculate_descriptors)
+    mcp.tool()(standardize_molecule)
+    mcp.tool()(enumerate_tautomers)
+    mcp.tool()(search_conformers)
+    mcp.tool()(save_conformer_as_molecule)

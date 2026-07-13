@@ -42,14 +42,19 @@ def main():
     from ypotheto_compchem_mcp.jobs import job_manager
     job_manager.start_workers()
     
+    from ypotheto_compchem_mcp.server import create_server
+    bundle = create_server(settings)
+
     if args.transport == "stdio":
         # Run standard FastMCP server via STDIO
-        from ypotheto_compchem_mcp.server import mcp
-        mcp.run()
+        bundle.mcp.run()
     else:
         # Run HTTP/SSE Starlette app via uvicorn
         import uvicorn
-        uvicorn.run("ypotheto_compchem_mcp.http_app:app", host="0.0.0.0", port=settings.port, reload=False)
+
+        from ypotheto_compchem_mcp.http_app import create_app
+        app = create_app(bundle)
+        uvicorn.run(app, host="0.0.0.0", port=settings.port)
 
 if __name__ == "__main__":
     main()

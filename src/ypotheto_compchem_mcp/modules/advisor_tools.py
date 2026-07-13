@@ -3,12 +3,12 @@ from functools import lru_cache
 from typing import Any
 
 import yaml
+from mcp.server.fastmcp import FastMCP
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
 from ypotheto_compchem_mcp.chemistry.qm_engine import estimate_time_seconds
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
 from ypotheto_compchem_mcp.errors import ValidationError
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 # Slow-DFT threshold (seconds) above which recommend_workflow suggests a
@@ -355,7 +355,6 @@ def _tailor_to_molecule(top_recommendation: dict[str, Any], workspace_id: str, m
         )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def recommend_workflow(goal: str, molecule_id: str | None = None) -> dict:
     """
@@ -385,7 +384,6 @@ def recommend_workflow(goal: str, molecule_id: str | None = None) -> dict:
     )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def explain_concept(concept: str) -> dict:
     """
@@ -416,7 +414,6 @@ def explain_concept(concept: str) -> dict:
     )
 
 
-@mcp.prompt()
 def compute_reaction_barrier(reactant_smiles: str, product_smiles: str, reaction_name: str = "this reaction") -> str:
     """Walk through computing the activation barrier for a reaction from reactant and product SMILES."""
     return (
@@ -436,7 +433,6 @@ def compute_reaction_barrier(reactant_smiles: str, product_smiles: str, reaction
     )
 
 
-@mcp.prompt()
 def characterize_a_molecule(smiles: str, molecule_name: str | None = None) -> str:
     """Walk through a full structural/electronic/thermochemical characterization of a molecule."""
     name = molecule_name or "this molecule"
@@ -455,7 +451,6 @@ def characterize_a_molecule(smiles: str, molecule_name: str | None = None) -> st
     )
 
 
-@mcp.prompt()
 def screen_solvent_compatibility(
     solute_smiles: str, candidate_solvent_smiles: list[str], solute_name: str = "the solute"
 ) -> str:
@@ -475,7 +470,6 @@ def screen_solvent_compatibility(
     )
 
 
-@mcp.prompt()
 def simulate_polymer_properties(monomer_smiles: str, repeat_units: int = 20, polymer_name: str = "the polymer") -> str:
     """Walk through building and simulating an amorphous polymer cell to get bulk properties."""
     return (
@@ -490,3 +484,12 @@ def simulate_polymer_properties(monomer_smiles: str, repeat_units: int = 20, pol
         "trusting any reported property; (5) reporting the equilibrated bulk properties with units "
         "and noting how long the simulation was run and whether it looked equilibrated."
     )
+
+
+def register_advisor_tools(mcp: FastMCP) -> None:
+    mcp.tool()(recommend_workflow)
+    mcp.tool()(explain_concept)
+    mcp.prompt()(compute_reaction_barrier)
+    mcp.prompt()(characterize_a_molecule)
+    mcp.prompt()(screen_solvent_compatibility)
+    mcp.prompt()(simulate_polymer_properties)

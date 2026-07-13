@@ -8,7 +8,7 @@ from starlette.routing import Mount, Route
 
 from ypotheto_compchem_mcp import __version__
 from ypotheto_compchem_mcp.config import settings
-from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.server import ServerBundle
 
 
 def _extract_bearer_token(request: Request) -> str:
@@ -209,32 +209,39 @@ async def serve_artifact(request):
     except Exception as e:
         return Response(f"Internal storage error: {str(e)}", status_code=500)
 
-# Build ASGI routes
-routes = [
-    Route("/healthz", endpoint=healthz, methods=["GET"]),
-    Route(
-        "/.well-known/oauth-protected-resource",
-        endpoint=oauth_protected_resource_metadata,
-        methods=["GET"],
-    ),
-    Route(
-        "/artifacts/{workspace_id}/{artifact_id}/{filename}",
-        endpoint=serve_artifact,
-        methods=["GET"]
-    ),
-    Mount("/mcp", app=mcp.streamable_http_app()),
-]
+def create_app(bundle: ServerBundle):
+    """Build the ASGI app from a `ServerBundle` (see `server.create_server`) -
+    explicit dependency injection instead of importing a module-global `mcp`
+    instance, so each caller (cli.py, tests) can build its own independent
+    app/server pair rather than sharing hidden global state."""
+    mcp = bundle.mcp
 
-# Wrap the routing app in plain-ASGI middleware, outermost first: CORS (so
-# preflight is handled before auth/timeout even run) -> Timeout -> Auth -> routes.
-#
-# lifespan is wired explicitly to mcp.session_manager.run(): Starlette's default
-# lifespan handler does NOT recurse into a Mount()'d sub-app's own lifespan, so
-# without this the streamable-HTTP session manager's task group is never
-# started and every real request to /mcp/mcp fails with "Task group is not
-# initialized. Make sure to use run()." - this was a pre-existing bug (present
-# since this Mount was first added), not introduced by this middleware rewrite.
-app = Starlette(routes=routes, lifespan=lambda _app: mcp.session_manager.run())
-app = AuthMiddleware(app)
-app = TimeoutMiddleware(app, timeout_seconds=settings.request_timeout_seconds)
-app = CorsLockdownMiddleware(app)
+    routes = [
+        Route("/healthz", endpoint=healthz, methods=["GET"]),
+        Route(
+            "/.well-known/oauth-protected-resource",
+            endpoint=oauth_protected_resource_metadata,
+            methods=["GET"],
+        ),
+        Route(
+            "/artifacts/{workspace_id}/{artifact_id}/{filename}",
+            endpoint=serve_artifact,
+            methods=["GET"]
+        ),
+        Mount("/mcp", app=mcp.streamable_http_app()),
+    ]
+
+    # Wrap the routing app in plain-ASGI middleware, outermost first: CORS (so
+    # preflight is handled before auth/timeout even run) -> Timeout -> Auth -> routes.
+    #
+    # lifespan is wired explicitly to mcp.session_manager.run(): Starlette's default
+    # lifespan handler does NOT recurse into a Mount()'d sub-app's own lifespan, so
+    # without this the streamable-HTTP session manager's task group is never
+    # started and every real request to /mcp/mcp fails with "Task group is not
+    # initialized. Make sure to use run()." - this was a pre-existing bug (present
+    # since this Mount was first added), not introduced by this middleware rewrite.
+    app = Starlette(routes=routes, lifespan=lambda _app: mcp.session_manager.run())
+    app = AuthMiddleware(app)
+    app = TimeoutMiddleware(app, timeout_seconds=settings.request_timeout_seconds)
+    app = CorsLockdownMiddleware(app)
+    return app

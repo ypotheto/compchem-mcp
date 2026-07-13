@@ -1,5 +1,7 @@
 from typing import Any
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.thermo_engine import (
     CANTERA_AVAILABLE,
     CLAPEYRON_AVAILABLE,
@@ -14,11 +16,9 @@ from ypotheto_compchem_mcp.envelope import (
 )
 from ypotheto_compchem_mcp.errors import BackendUnavailableError, ValidationError
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_mixture_flash(
     components: list[str],
@@ -93,7 +93,6 @@ def run_mixture_flash(
         meta={"model": model, "flash_type": flash_type}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_reactor_kinetics(
     mechanism: str,
@@ -155,7 +154,6 @@ def run_reactor_kinetics(
         meta={"mechanism": mechanism, "reactor_type": reactor_type}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def calculate_transport_properties(
     components: list[str],
@@ -188,3 +186,9 @@ def calculate_transport_properties(
         results=res["results"],
         interpretation=res["interpretation"]
     )
+
+
+def register_thermo_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_mixture_flash)
+    mcp.tool()(run_reactor_kinetics)
+    mcp.tool()(calculate_transport_properties)

@@ -1,13 +1,13 @@
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.mlff_engine import (
     run_mlff_molecular_dynamics_engine,
     run_mlff_optimization_engine,
 )
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_mlff_optimization(
     molecule_id: str,
@@ -56,7 +56,6 @@ def run_mlff_optimization(
         meta={"optimized_molecule_id": res["results"]["optimized_molecule_id"]}
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_mlff_molecular_dynamics(
     molecule_id: str,
@@ -116,3 +115,8 @@ def run_mlff_molecular_dynamics(
         artifacts=res.get("artifacts", []),
         meta={"molecule_id": molecule_id}
     )
+
+
+def register_mlff_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_mlff_optimization)
+    mcp.tool()(run_mlff_molecular_dynamics)

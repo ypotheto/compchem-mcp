@@ -1,3 +1,5 @@
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_from_workspace
 from ypotheto_compchem_mcp.chemistry.preflight import (
     estimate_computational_resources,
@@ -9,11 +11,9 @@ from ypotheto_compchem_mcp.envelope import (
     make_success_response,
     mcp_tool_decorator,
 )
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_scientific_preflight(
     molecule_id: str,
@@ -80,3 +80,7 @@ def run_scientific_preflight(
     )
     
     return make_success_response(results, interpretation)
+
+
+def register_scientific_preflight_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_scientific_preflight)

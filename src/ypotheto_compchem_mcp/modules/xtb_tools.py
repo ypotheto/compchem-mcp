@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.chemistry.xtb_engine import (
     CREST_AVAILABLE,
     XTB_AVAILABLE,
@@ -12,7 +14,6 @@ from ypotheto_compchem_mcp.envelope import (
 )
 from ypotheto_compchem_mcp.errors import BackendUnavailableError
 from ypotheto_compchem_mcp.jobs import job_manager
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id
 
 
@@ -31,7 +32,6 @@ def run_conformer_search_job(workspace_id, molecule_id, method, solvent, energy_
     res = run_conformer_search_engine(workspace_id, molecule_id, method, solvent, energy_window_kcal)
     return _finalize_run_conformer_search(res, molecule_id, method)
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_xtb_calculation(
     molecule_id: str,
@@ -114,7 +114,6 @@ def run_xtb_calculation(
         }
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_conformer_search(
     molecule_id: str,
@@ -174,3 +173,8 @@ def run_conformer_search(
 
     res = run_conformer_search_engine(workspace_id, molecule_id, method, solvent, energy_window_kcal)
     return _finalize_run_conformer_search(res, molecule_id, method)
+
+
+def register_xtb_tools(mcp: FastMCP) -> None:
+    mcp.tool()(run_xtb_calculation)
+    mcp.tool()(run_conformer_search)

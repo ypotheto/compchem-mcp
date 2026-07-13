@@ -1,4 +1,6 @@
 
+from mcp.server.fastmcp import FastMCP
+
 from ypotheto_compchem_mcp.artifacts import register_artifact
 from ypotheto_compchem_mcp.chemistry.polymer_engine import (
     analyze_md_trajectory_engine,
@@ -8,7 +10,6 @@ from ypotheto_compchem_mcp.chemistry.polymer_engine import (
     run_lammps_simulation_engine,
 )
 from ypotheto_compchem_mcp.envelope import make_success_response, mcp_tool_decorator
-from ypotheto_compchem_mcp.server import mcp
 from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 
 
@@ -27,7 +28,6 @@ def run_pack_amorphous_cell_job(workspace_id, molecule_ids, counts, density_g_cm
     res = pack_amorphous_cell_engine(workspace_id, molecule_ids, counts, density_g_cm3, box_size_angstrom)
     return _finalize_pack_amorphous_cell(res)
 
-@mcp.tool()
 @mcp_tool_decorator
 def register_monomer(
     smiles: str,
@@ -66,7 +66,6 @@ def register_monomer(
         }
     )
 
-@mcp.tool()
 @mcp_tool_decorator
 def build_polymer_chain(
     monomer_id: str,
@@ -116,7 +115,6 @@ def build_polymer_chain(
     )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def pack_amorphous_cell(
     molecule_ids: list[str],
@@ -166,7 +164,6 @@ def pack_amorphous_cell(
     return _finalize_pack_amorphous_cell(res)
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def run_lammps_simulation(
     packed_molecule_id: str,
@@ -227,7 +224,6 @@ def run_lammps_simulation(
     )
 
 
-@mcp.tool()
 @mcp_tool_decorator
 def analyze_md_trajectory(
     trajectory_file_id: str
@@ -267,3 +263,11 @@ def analyze_md_trajectory(
         results=res["results"],
         interpretation=res["interpretation"]
     )
+
+
+def register_polymer_tools(mcp: FastMCP) -> None:
+    mcp.tool()(register_monomer)
+    mcp.tool()(build_polymer_chain)
+    mcp.tool()(pack_amorphous_cell)
+    mcp.tool()(run_lammps_simulation)
+    mcp.tool()(analyze_md_trajectory)

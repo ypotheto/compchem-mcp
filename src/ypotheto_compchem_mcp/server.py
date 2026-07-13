@@ -1,13 +1,14 @@
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from ypotheto_compchem_mcp import __version__
-from ypotheto_compchem_mcp.config import settings
+from ypotheto_compchem_mcp.config import Settings
 
 
-def _build_transport_security() -> TransportSecuritySettings:
+def _build_transport_security(settings: Settings) -> TransportSecuritySettings:
     """FastMCP constructed without explicit transport security auto-enables
     DNS-rebinding protection with a localhost-only Host allowlist - correct for
     the local-dev threat model it targets, but it 421s every request that
@@ -28,10 +29,7 @@ def _build_transport_security() -> TransportSecuritySettings:
         allowed_origins=allowed_origins,
     )
 
-# Create FastMCP server
-mcp = FastMCP("ypotheto-compchem", transport_security=_build_transport_security())
 
-@mcp.tool()
 def ping() -> str:
     """
     Check if the Ypotheto Computational Chemistry MCP Server is responsive.
@@ -39,27 +37,56 @@ def ping() -> str:
     """
     return f"pong from ypotheto-compchem-mcp version {__version__}"
 
-# Import modules below to register their tools on the mcp instance above.
-# These are deliberate side-effect-only imports: each module's tool
-# decorators register against the shared instance just by being imported,
-# and nothing in this file references the imported names directly. Do not
-# remove any of these, including via an automated lint auto-fix pass - one
-# such pass previously deleted this entire block since it looked unused on
-# a naive syntactic check, silently breaking every tool except the one
-# defined directly above (see CHANGELOG.md, Phase 5). The lint suppression
-# comments on each line below are load-bearing, not decorative.
-from ypotheto_compchem_mcp.modules import advisor_tools  # noqa: F401,E402,I001
-from ypotheto_compchem_mcp.modules import builder_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import cheminformatics_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import dynamics_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import ensemble_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import kinetics_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import mlff_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import periodic_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import polymer_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import quantum_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import scientific_preflight_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import solubility_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import thermo_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import vibrations_tools  # noqa: F401,E402
-from ypotheto_compchem_mcp.modules import xtb_tools  # noqa: F401,E402
+
+@dataclass
+class ServerBundle:
+    mcp: FastMCP
+    settings: Settings
+
+
+def create_server(settings: Settings) -> ServerBundle:
+    """Build a fresh FastMCP server instance with every tool/prompt module
+    registered against it - explicit dependency injection instead of a
+    module-global `mcp` + import-side-effect registration (see CHANGELOG.md,
+    Phase 8). Each caller (cli.py, http_app.py, tests) gets its own
+    independent instance rather than sharing hidden global state; nothing
+    stops two callers from passing the same `settings` singleton (the normal
+    case for the real running server), but nothing requires it either."""
+    mcp = FastMCP("ypotheto-compchem", transport_security=_build_transport_security(settings))
+    mcp.tool()(ping)
+
+    from ypotheto_compchem_mcp.modules import (
+        advisor_tools,
+        builder_tools,
+        cheminformatics_tools,
+        dynamics_tools,
+        ensemble_tools,
+        kinetics_tools,
+        mlff_tools,
+        periodic_tools,
+        polymer_tools,
+        quantum_tools,
+        scientific_preflight_tools,
+        solubility_tools,
+        thermo_tools,
+        vibrations_tools,
+        xtb_tools,
+    )
+
+    advisor_tools.register_advisor_tools(mcp)
+    builder_tools.register_builder_tools(mcp)
+    cheminformatics_tools.register_cheminformatics_tools(mcp)
+    dynamics_tools.register_dynamics_tools(mcp)
+    ensemble_tools.register_ensemble_tools(mcp)
+    kinetics_tools.register_kinetics_tools(mcp)
+    mlff_tools.register_mlff_tools(mcp)
+    periodic_tools.register_periodic_tools(mcp)
+    polymer_tools.register_polymer_tools(mcp)
+    quantum_tools.register_quantum_tools(mcp)
+    scientific_preflight_tools.register_scientific_preflight_tools(mcp)
+    solubility_tools.register_solubility_tools(mcp)
+    thermo_tools.register_thermo_tools(mcp)
+    vibrations_tools.register_vibrations_tools(mcp)
+    xtb_tools.register_xtb_tools(mcp)
+
+    return ServerBundle(mcp=mcp, settings=settings)

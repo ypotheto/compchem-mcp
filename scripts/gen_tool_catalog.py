@@ -8,7 +8,8 @@ Prints a markdown table to stdout; paste it into README.md between the
 import asyncio
 import re
 
-from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.config import settings
+from ypotheto_compchem_mcp.server import create_server
 
 
 def _first_line(description: str | None) -> str:
@@ -33,7 +34,8 @@ def _param_names(input_schema: dict) -> str:
 
 
 async def _main() -> None:
-    tools = await mcp.list_tools()
+    bundle = create_server(settings)
+    tools = await bundle.mcp.list_tools()
     tools = sorted(tools, key=lambda t: t.name)
 
     lines = ["| Tool Name | Parameters | Description |", "| :--- | :--- | :--- |"]

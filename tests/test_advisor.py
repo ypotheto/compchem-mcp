@@ -1,11 +1,12 @@
 import asyncio
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import build_molecule_from_smiles_engine
+from ypotheto_compchem_mcp.config import settings
 from ypotheto_compchem_mcp.modules.advisor_tools import (
     explain_concept,
     recommend_workflow,
 )
-from ypotheto_compchem_mcp.server import mcp
+from ypotheto_compchem_mcp.server import create_server
 
 
 def test_explain_concept_lists_at_least_25_concepts():
@@ -79,7 +80,8 @@ def test_recommend_workflow_tailors_caveat_for_a_slow_molecule():
 
 def test_advisor_prompts_are_registered():
     async def _list_prompt_names():
-        prompts = await mcp.list_prompts()
+        bundle = create_server(settings)
+        prompts = await bundle.mcp.list_prompts()
         return {p.name for p in prompts}
 
     names = asyncio.run(_list_prompt_names())
@@ -92,12 +94,14 @@ def test_advisor_prompts_are_registered():
 
 
 def test_compute_reaction_barrier_prompt_content():
-    result = asyncio.run(
-        mcp.get_prompt(
+    async def _get_prompt():
+        bundle = create_server(settings)
+        return await bundle.mcp.get_prompt(
             "compute_reaction_barrier",
             {"reactant_smiles": "CCO", "product_smiles": "CC=O", "reaction_name": "ethanol oxidation"},
         )
-    )
+
+    result = asyncio.run(_get_prompt())
     text = result.messages[0].content.text
     assert "ethanol oxidation" in text
     assert "run_neb_calculation" in text
