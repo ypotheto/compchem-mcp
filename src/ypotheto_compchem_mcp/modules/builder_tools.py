@@ -5,6 +5,7 @@ from ypotheto_compchem_mcp.chemistry.builder_engine import (
     get_molecule_path,
 )
 from ypotheto_compchem_mcp.envelope import WarningInfo, make_success_response, mcp_tool_decorator
+from ypotheto_compchem_mcp.molecules import molecule_store
 from ypotheto_compchem_mcp.server import mcp
 
 _MAX_INLINE_CONTENT_BYTES = 50 * 1024
@@ -121,4 +122,69 @@ def get_3d_coordinates(molecule_id: str, format: str = "xyz") -> dict:
         warnings=warnings,
         artifacts=[artifact],
         meta={"molecule_id": molecule_id}
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def list_molecules() -> dict:
+    """
+    List all molecules stored in the current workspace.
+    Use to see what structures are already available before building duplicates.
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    workspace_id = get_workspace_id()
+    molecules = molecule_store.list(workspace_id)
+
+    interpretation = (
+        f"Found {len(molecules)} molecule(s) in this workspace."
+        if molecules
+        else "No molecules stored in this workspace yet."
+    )
+    return make_success_response(
+        results={"molecules": molecules, "count": len(molecules)},
+        interpretation=interpretation
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def describe_molecule(molecule_id: str) -> dict:
+    """
+    Retrieve stored metadata (name, formula, SMILES, atom count, method) for a molecule
+    without loading its full 3D coordinates.
+
+    Parameters:
+    - molecule_id: The stored molecule handle (e.g. mol_a1b2c3d4)
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    workspace_id = get_workspace_id()
+    info = molecule_store.describe(workspace_id, molecule_id)
+
+    interpretation = (
+        f"{molecule_id}: '{info.get('name', '')}' ({info.get('formula', '')}), "
+        f"{info.get('num_atoms', '?')} atoms, built via {info.get('method', 'unknown')}."
+    )
+    return make_success_response(
+        results=info,
+        interpretation=interpretation,
+        meta={"molecule_id": molecule_id}
+    )
+
+@mcp.tool()
+@mcp_tool_decorator
+def delete_molecule(molecule_id: str) -> dict:
+    """
+    Permanently delete a stored molecule's coordinates and metadata from this workspace.
+    This cannot be undone - any downstream artifact/job still referencing this
+    molecule_id will start failing with a not-found error.
+
+    Parameters:
+    - molecule_id: The stored molecule handle to delete (e.g. mol_a1b2c3d4)
+    """
+    from ypotheto_compchem_mcp.workspace import get_workspace_id
+    workspace_id = get_workspace_id()
+    molecule_store.delete(workspace_id, molecule_id)
+
+    return make_success_response(
+        results={"molecule_id": molecule_id, "deleted": True},
+        interpretation=f"Deleted molecule {molecule_id} from this workspace."
     )

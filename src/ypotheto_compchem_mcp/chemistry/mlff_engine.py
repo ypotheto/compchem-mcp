@@ -95,16 +95,16 @@ def run_mlff_optimization_engine(
     from ase.io import write
 
     from ypotheto_compchem_mcp.chemistry.builder_engine import (
-        _get_molecules_dir,
-        _load_index,
-        _save_index,
+        get_molecules_dir,
+        load_molecule_index,
+        save_molecule_index,
     )
     
     f_xyz = io.StringIO()
     write(f_xyz, atoms, format="xyz")
     xyz_block = f_xyz.getvalue()
     
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     (mol_dir / f"{opt_id}.xyz").write_text(xyz_block, encoding="utf-8")
     
     cif_block = ""
@@ -124,9 +124,9 @@ def run_mlff_optimization_engine(
         "method": f"MLFF Optimization ({model_name})"
     }
     
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     index[opt_id] = meta
-    _save_index(workspace_id, index)
+    save_molecule_index(workspace_id, index)
     
     energy_ev = float(atoms.get_potential_energy())
     

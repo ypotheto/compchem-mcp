@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import psycopg2
 import pytest
 
-from ypotheto_compchem_mcp.chemistry.builder_engine import _load_index, save_molecule_coords
+from ypotheto_compchem_mcp.chemistry.builder_engine import load_molecule_index, save_molecule_coords
 from ypotheto_compchem_mcp.config import settings
 from ypotheto_compchem_mcp.database import get_connection, initialize_database
 from ypotheto_compchem_mcp.jobs import JobManager
@@ -122,7 +122,7 @@ def test_searchable_archive_db():
         save_molecule_coords(workspace_id, molecule_id, "sdf block", "xyz block", meta)
         
     # Load index from database
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     assert molecule_id in index
     assert index[molecule_id]["name"] == "TestMolecule"
     assert index[molecule_id]["formula"] == "H2O"

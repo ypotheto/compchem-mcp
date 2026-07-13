@@ -8,7 +8,7 @@ Powered by **RDKit**, **PySCF**, **Atomic Simulation Environment (ASE)**, **Sell
 
 ## Features & Capabilities
 
-*   **Molecule Builder & Cheminformatics**: Convert SMILES strings to 3D optimized structures (MMFF94 or UFF), render 2D layouts (SVG), compute molecular descriptors (MW, LogP, TPSA), and evaluate Lipinski filters.
+*   **Molecule Builder & Cheminformatics**: Convert SMILES strings to 3D optimized structures (MMFF94 or UFF), render 2D layouts (SVG), compute molecular descriptors (MW, LogP, TPSA), and evaluate Lipinski filters. `list_molecules`/`describe_molecule`/`delete_molecule` manage the workspace's stored molecule archive directly.
 *   **Ab Initio Electronic Structure Theory**: Run Hartree-Fock (HF) and Density Functional Theory (DFT) calculations using PySCF. Retrieve potential energies, dipole moments, HOMO/LUMO gaps, and Mulliken charges.
 *   **Affordable Semi-Empirical & Conformer Search**: Perform GFN-xTB calculations and execute conformer ensemble searches using CREST. Evaluates ensemble-averaged free energies and thermochemistry.
 *   **Vibrational Spectroscopy & Molecular Dynamics**: Compute normal modes, frequencies, ZPE, and thermochemical corrections (Enthalpy, Entropy, Gibbs free energy). Simulates IR intensities (Lorentzian broadening plots) and runs Langevin or Verlet molecular dynamics.
@@ -206,6 +206,8 @@ are added or removed, so this table can't silently drift out of sync again.
 | `calculate_hsp_distance` | `molecule_id_1`, `molecule_id_2` | Calculate the Hansen Solubility Parameter (HSP) distance (Ra) between two stored molecules. |
 | `calculate_transport_properties` | `components`, `mole_fractions`, `temperature_k`, ... | Calculate viscosity, thermal conductivity, and binary diffusion coefficients. |
 | `calculate_vibrations` | `molecule_id`, `method`, `functional`, ... | Run vibrational frequency analysis and calculate thermochemistry corrections. |
+| `delete_molecule` | `molecule_id` | Permanently delete a stored molecule's coordinates and metadata from this workspace. |
+| `describe_molecule` | `molecule_id` | Retrieve stored metadata (name, formula, SMILES, atom count, method) for a molecule without loading its full 3D coordinates. |
 | `enumerate_tautomers` | `molecule_id` | Enumerate all tautomeric forms for a stored molecule. |
 | `estimate_calculation_time` | `molecule_id`, `method`, `basis` | Estimate the execution time for a quantum chemistry calculation before running it. |
 | `explain_concept` | `concept` | Look up a short, plain-language explanation of a core computational chemistry concept (basis sets, DFT functionals, transition states, HSP, etc.); call with an empty string to list all available concepts. |
@@ -213,6 +215,7 @@ are added or removed, so this table can't silently drift out of sync again.
 | `get_3d_coordinates` | `molecule_id`, `format` | Retrieve coordinate contents (SDF, XYZ, or PDB) of a stored molecule. |
 | `get_job_status` | `job_id` | Check progress or fetch results of a background calculation job. |
 | `import_periodic_structure` | `cif_content`, `name` | Import a periodic crystal structure from a CIF file. |
+| `list_molecules` | None | List all molecules stored in the current workspace. |
 | `optimize_geometry` | `molecule_id`, `method`, `functional`, ... | Relax molecule coordinates using ASE LBFGS optimizer coupled with PySCF energy/gradients. |
 | `pack_amorphous_cell` | `molecule_ids`, `counts`, `density_g_cm3`, ... | Pack polymer chains and solvent molecules into a periodic box using Packmol. |
 | `ping` | None | Check if the Ypotheto Computational Chemistry MCP Server is responsive. |

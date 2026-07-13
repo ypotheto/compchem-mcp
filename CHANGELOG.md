@@ -2,6 +2,53 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased] - Phase 8: molecule store & structural polish
+
+### Added
+- `molecules.py`: `MoleculeStore`, a cached facade over the molecule index/
+  file/Postgres tiering already implemented in `chemistry.builder_engine`
+  (reuses it rather than duplicating it). Adds a short-lived, thread-safe
+  cache for repeated `list`/`describe` calls (previously every index lookup
+  re-hit Postgres or remote storage with no caching at all), and molecule
+  deletion (no delete capability existed anywhere in this codebase before
+  this). Renamed `builder_engine.py`'s formerly-private `_get_molecules_dir`/
+  `_load_index`/`_save_index` to `get_molecules_dir`/`load_molecule_index`/
+  `save_molecule_index` since they're now genuinely used cross-module (also
+  already used directly by `conformer_engine.py`/`mlff_engine.py`/
+  `periodic_engine.py`, updated to match).
+- Three new tools in `modules/builder_tools.py`: `list_molecules`,
+  `describe_molecule`, `delete_molecule`.
+- `chemistry/builder_engine.py`'s `save_molecule_index` now invalidates
+  `MoleculeStore`'s cache after every write, so a molecule saved via any
+  path (builder/conformer/mlff/periodic engines) is visible to
+  `list_molecules`/`describe_molecule` immediately rather than only after
+  the cache's TTL expires.
+
+### Fixed
+- **DISCOVERY (found while testing `MoleculeStore` against the full test
+  suite, not the new code in isolation):** `chemistry/ensemble_pipeline.py`'s
+  temporary "reference conformer" registration (used internally while
+  running ensemble thermochemistry) called `save_molecule_coords` with an
+  incomplete meta dict - just `{"formula": ..., "num_atoms": ...}`, missing
+  `molecule_id`/`name`/`smiles`/`method` entirely, unlike every other
+  `save_molecule_coords` call site in the codebase. This left malformed
+  entries in the shared workspace molecule index, invisible until
+  `MoleculeStore.list()`/`describe_molecule()` became the first code path to
+  actually assume every index entry carries a `molecule_id`. Fixed at the
+  source (the meta dict now includes all four fields); `MoleculeStore` also
+  defensively normalizes any entry missing `molecule_id` by backfilling it
+  from the index's own dict key, since the index is otherwise-untrusted
+  persisted state this store didn't necessarily write itself.
+
+### Checked, no action needed
+- 8.3 (SSRF hardening for URL-ingestion tools): the plan's premise -
+  "`analyze_md_trajectory` already accepts a `trajectory_url`" - doesn't
+  match the actual code. `analyze_md_trajectory` takes `trajectory_file_id`,
+  and only parses path components out of a URL-shaped string locally (no
+  HTTP fetch of any kind); there is no URL-fetching tool anywhere in this
+  codebase today, so there's no SSRF surface to guard. Left as a plan note
+  for whenever a real URL-ingestion tool is added.
+
 ## [Unreleased] - Phase 7: auth & multi-tenancy
 
 ### Added

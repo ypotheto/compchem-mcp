@@ -142,13 +142,27 @@ def run_ensemble_thermochemistry_engine(
         counts = Counter(symbols)
         formula = "".join(f"{el}{count if count > 1 else ''}" for el, count in sorted(counts.items()))
         
-        # Save temporary conformer coordinates
+        # Save temporary conformer coordinates. Every other save_molecule_coords
+        # call site in this codebase includes molecule_id/name/smiles/method in
+        # its meta dict; this one didn't, which left an inconsistently-shaped
+        # entry (just formula+num_atoms) in the shared workspace molecule index
+        # - invisible until MoleculeStore.list()/describe_molecule() (Phase 8)
+        # started assuming every entry has a molecule_id. smiles is left empty
+        # rather than computed via bond perception from the raw XYZ parse
+        # (nontrivial and not needed for this temporary reference structure).
         save_molecule_coords(
             workspace_id,
             conf_mol_id,
             Chem.MolToMolBlock(conf_mol),
             c["xyz_block"],
-            {"formula": formula, "num_atoms": conf_mol.GetNumAtoms()}
+            {
+                "molecule_id": conf_mol_id,
+                "name": f"{molecule_id} conformer {i} (ensemble reference)",
+                "formula": formula,
+                "smiles": "",
+                "num_atoms": conf_mol.GetNumAtoms(),
+                "method": "xtb_ensemble_reference_conformer",
+            }
         )
         
         # Geometry Optimization. run_xtb_calculation_engine now raises on failure

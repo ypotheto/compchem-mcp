@@ -11,7 +11,7 @@ from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 from ypotheto_compchem_mcp.workspace import get_workspace_id, workspace_manager
 
 
-def _get_molecules_dir(workspace_id: str) -> Path:
+def get_molecules_dir(workspace_id: str) -> Path:
     """Get the molecules directory for the workspace."""
     path = workspace_manager.get_workspace_dir(workspace_id) / "molecules"
     path.mkdir(parents=True, exist_ok=True)
@@ -19,9 +19,9 @@ def _get_molecules_dir(workspace_id: str) -> Path:
 
 def _get_index_file(workspace_id: str) -> Path:
     """Get the index file path for molecules."""
-    return _get_molecules_dir(workspace_id) / "index.json"
+    return get_molecules_dir(workspace_id) / "index.json"
 
-def _load_index(workspace_id: str) -> dict[str, Any]:
+def load_molecule_index(workspace_id: str) -> dict[str, Any]:
     """Load the molecule index from storage, falling back to database if configured."""
     import logging
 
@@ -76,7 +76,7 @@ def _load_index(workspace_id: str) -> dict[str, Any]:
                 pass
         return {}
 
-def _save_index(workspace_id: str, index: dict[str, Any]):
+def save_molecule_index(workspace_id: str, index: dict[str, Any]):
     """Save the molecule index to disk and storage."""
     from ypotheto_compchem_mcp.storage import storage
     index_file = _get_index_file(workspace_id)
@@ -84,13 +84,22 @@ def _save_index(workspace_id: str, index: dict[str, Any]):
     index_file.write_text(index_text, encoding="utf-8")
     storage.write_file(workspace_id, "molecules/index.json", index_text.encode("utf-8"))
 
+    # Invalidate MoleculeStore's cached index (used by list_molecules/
+    # describe_molecule) so a molecule saved just now - by this function or
+    # any of its several callers (builder/conformer/mlff/periodic engines) -
+    # is visible immediately rather than only after the cache's TTL expires.
+    # Lazy import: molecules.py imports from this module at call time, so a
+    # module-level import here would be circular.
+    from ypotheto_compchem_mcp.molecules import molecule_store
+    molecule_store.invalidate(workspace_id)
+
 def save_molecule_coords(workspace_id: str, molecule_id: str, sdf_block: str, xyz_block: str, meta: dict[str, Any]):
     """Helper to save molecule coordinates and update the index."""
     import logging
 
     from ypotheto_compchem_mcp.database import get_connection
     from ypotheto_compchem_mcp.storage import storage
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     
     # Save SDF and XYZ files locally
     (mol_dir / f"{molecule_id}.sdf").write_text(sdf_block, encoding="utf-8")
@@ -143,14 +152,14 @@ def save_molecule_coords(workspace_id: str, molecule_id: str, sdf_block: str, xy
                 pass
             
     # Update index
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     index[molecule_id] = meta
-    _save_index(workspace_id, index)
+    save_molecule_index(workspace_id, index)
 
 def get_molecule_path(workspace_id: str, molecule_id: str, fmt: str = "sdf") -> Path:
     """Get the file path of a saved molecule, syncing from storage if needed."""
     from ypotheto_compchem_mcp.storage import storage
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     filepath = mol_dir / f"{molecule_id}.{fmt}"
     if not filepath.exists():
         try:

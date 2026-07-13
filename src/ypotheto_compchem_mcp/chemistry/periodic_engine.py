@@ -12,9 +12,9 @@ from ase.io import read, write
 
 from ypotheto_compchem_mcp.chemistry._backend_checks import require_xtb_calculator
 from ypotheto_compchem_mcp.chemistry.builder_engine import (
-    _get_molecules_dir,
-    _load_index,
-    _save_index,
+    get_molecules_dir,
+    load_molecule_index,
+    save_molecule_index,
 )
 from ypotheto_compchem_mcp.errors import BackendUnavailableError, CalculationFailedError
 
@@ -76,7 +76,7 @@ def import_periodic_structure_engine(
     xyz_block = f_xyz.getvalue()
 
     # 4. Save files to molecules folder
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     (mol_dir / f"{molecule_id}.cif").write_text(cif_block, encoding="utf-8")
     (mol_dir / f"{molecule_id}.xyz").write_text(xyz_block, encoding="utf-8")
 
@@ -93,9 +93,9 @@ def import_periodic_structure_engine(
         "method": "CIF Import"
     }
     
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     index[molecule_id] = meta
-    _save_index(workspace_id, index)
+    save_molecule_index(workspace_id, index)
 
     return {
         "molecule_id": molecule_id,
@@ -120,7 +120,7 @@ def import_periodic_structure_engine(
 
 def load_periodic_structure_engine(workspace_id: str, molecule_id: str) -> Atoms:
     """Load a periodic structure from the workspace as an ASE Atoms object."""
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     cif_path = mol_dir / f"{molecule_id}.cif"
     if not cif_path.exists():
         raise FileNotFoundError(f"Periodic structure {molecule_id} coordinates (.cif) not found in workspace.")
@@ -219,7 +219,7 @@ def generate_supercell_engine(
     write(f_xyz, super_atoms, format="xyz")
     xyz_block = f_xyz.getvalue()
 
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     (mol_dir / f"{super_id}.cif").write_text(cif_block, encoding="utf-8")
     (mol_dir / f"{super_id}.xyz").write_text(xyz_block, encoding="utf-8")
 
@@ -236,9 +236,9 @@ def generate_supercell_engine(
         "method": "Supercell Expansion"
     }
 
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     index[super_id] = meta
-    _save_index(workspace_id, index)
+    save_molecule_index(workspace_id, index)
 
     return {
         "ok": True,
@@ -292,7 +292,7 @@ def build_surface_slab_engine(
     write(f_xyz, slab, format="xyz")
     xyz_block = f_xyz.getvalue()
     
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     (mol_dir / f"{slab_id}.cif").write_text(cif_block, encoding="utf-8")
     (mol_dir / f"{slab_id}.xyz").write_text(xyz_block, encoding="utf-8")
     
@@ -310,9 +310,9 @@ def build_surface_slab_engine(
         "method": "Surface Slab Generation"
     }
     
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     index[slab_id] = meta
-    _save_index(workspace_id, index)
+    save_molecule_index(workspace_id, index)
     
     return {
         "ok": True,
@@ -344,7 +344,7 @@ def add_adsorbate_to_surface_engine(
     """
     slab_atoms = load_periodic_structure_engine(workspace_id, slab_molecule_id)
     
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     xyz_path = mol_dir / f"{adsorbate_molecule_id}.xyz"
     if not xyz_path.exists():
         raise FileNotFoundError(f"Adsorbate molecule {adsorbate_molecule_id} coordinates (.xyz) not found in workspace.")
@@ -406,9 +406,9 @@ def add_adsorbate_to_surface_engine(
         "method": "Adsorption Insertion"
     }
     
-    index = _load_index(workspace_id)
+    index = load_molecule_index(workspace_id)
     index[combined_id] = meta
-    _save_index(workspace_id, index)
+    save_molecule_index(workspace_id, index)
     
     return {
         "ok": True,

@@ -8,7 +8,7 @@ from rdkit.Chem import AllChem
 from rdkit.Chem.rdMolDescriptors import CalcMolFormula
 
 from ypotheto_compchem_mcp.chemistry.builder_engine import (
-    _get_molecules_dir,
+    get_molecules_dir,
     load_molecule_from_workspace,
     save_molecule_coords,
 )
@@ -102,7 +102,7 @@ def search_conformers_engine(
         })
 
     # 6. Save the multi-conformer molecule block in workspace
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     multi_sdf_path = mol_dir / f"{molecule_id}_conformers.sdf"
     
     # Write all unique conformers to a single SDF file
@@ -132,7 +132,7 @@ def save_conformer_as_molecule_engine(
     Extract a single conformer from the multi-conformer SDF and save it as a new
     standalone molecule in the workspace.
     """
-    mol_dir = _get_molecules_dir(workspace_id)
+    mol_dir = get_molecules_dir(workspace_id)
     multi_sdf_path = mol_dir / f"{parent_molecule_id}_conformers.sdf"
     if not multi_sdf_path.exists():
         raise FileNotFoundError(f"Multi-conformer file for molecule {parent_molecule_id} not found.")
